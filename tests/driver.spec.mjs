@@ -1,0 +1,181 @@
+/**
+ * Loop-shim smoke tests for the pure system-prompt assembly and fallback
+ * classification. These lock in the two behaviors that regressed before:
+ * omo rules must reach the model even though runtime context is suppressed,
+ * and fallback must only advance on omo-style retryable failures.
+ */
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fallbackRetryable, gateToolCall, maxStepsPrefillFor, opencodeUsesPatch, persistPlanFile, systemPromptFor } from '../presets/opencode-omo/driver.mjs'
+import { renderRulesFor } from '../presets/opencode-omo/rules.mjs'
+
+function roleFace(role = 'sisyphus') {
+  return {
+    roleFor: () => role,
+    configFor: () => ({ fallbackModels: [] }),
+    fallbackModelsFor: () => [],
+    primaryModelFor: () => undefined,
+  }
+}
+
+function mockAgent(cwd, events = [], model = 'deepseek-v4') {
+  return {
+    session: {
+      id: 'session-test',
+      header: { cwd, createdAt: 1234567890 },
+      events,
+    },
+    options: { provider: 'deepseek-official', model },
+  }
+}
+
+function mockState() {
+  return { fallbackAttempts: new Map(), lastRouteTurn: 0, ultraworkTurn: 0 }
+}
+
+test('complete system prompt folds omo rules in despite suppressed runtime context', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'omo-driver-'))
+  try {
+    mkdirSync(join(cwd, '.omo', 'rules'), { recursive: true })
+    writeFileSync(join(cwd, '.omo', 'rules', 'house.md'), '# house rule\nAlways verify.\n')
+    const ctx = { tools: { schemas: () => [] } }
+    const prompt = systemPromptFor(ctx, roleFace(), mockState(), mockAgent(cwd))
+    assert.match(prompt, /<omo-rules>/)
+    assert.match(prompt, /Rules from: .*\.omo\/rules\/house\.md/)
+    assert.match(prompt, /Always verify\./)
+    assert.match(prompt, /<env>/)
+    assert.match(prompt, /Working directory:/)
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
+test('plan mode injects the verbatim opencode plan-mode prompt with a real plan path', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'omo-plan-'))
+  try {
+    const events = [{ type: 'plan/mode', data: { active: true } }]
+    const ctx = { tools: { schemas: () => [] } }
+    const prompt = systemPromptFor(ctx, roleFace(), mockState(), mockAgent(cwd, events))
+    assert.match(prompt, /Plan mode is active/)
+    assert.match(prompt, /\.opencode\/plans\/1234567890-session-test\.md/)
+    assert.match(prompt, /No plan file exists yet/)
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
+test('leaving plan mode after a logged plan header injects the build-switch prompt once', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'omo-buildswitch-'))
+  try {
+    const events = [
+      { type: 'plan/mode', data: { active: true } },
+      { type: 'request/header' },
+      { type: 'plan/mode', data: { active: false } },
+    ]
+    const ctx = { tools: { schemas: () => [] } }
+    const prompt = systemPromptFor(ctx, roleFace(), mockState(), mockAgent(cwd, events))
+    assert.match(prompt, /operational mode has changed from plan to build/)
+    assert.match(prompt, /You are permitted to make file changes/)
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
+test('approved plans persist at the opencode path and feed the build-switch reminder', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'omo-planfile-'))
+  try {
+    const agent = mockAgent(cwd)
+    assert.equal(persistPlanFile(agent.session, '# My plan\n'), true)
+    const events = [
+      { type: 'plan/mode', data: { active: true } },
+      { type: 'request/header' },
+      { type: 'plan/mode', data: { active: false } },
+    ]
+    const ctx = { tools: { schemas: () => [] } }
+    const prompt = systemPromptFor(ctx, roleFace(), mockState(), mockAgent(cwd, events))
+    assert.match(prompt, /A plan file exists at .*\.opencode\/plans\/1234567890-session-test\.md/)
+    assert.match(prompt, /execute on the plan defined within it/)
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
+test('fallback advances only on omo-style retryable failure codes', () => {
+  assert.equal(fallbackRetryable({ code: 'RATE_LIMIT' }), true)
+  assert.equal(fallbackRetryable({ code: 'QUOTA' }), true)
+  assert.equal(fallbackRetryable({ code: 'SERVER' }), true)
+  assert.equal(fallbackRetryable({ code: 'MODEL_NOT_FOUND' }), true)
+  assert.equal(fallbackRetryable({ status: 429 }), true)
+  assert.equal(fallbackRetryable({ status: 404 }), true)
+  assert.equal(fallbackRetryable({ code: 'AUTH' }), false)
+  assert.equal(fallbackRetryable({ code: 'CONTEXT_WINDOW_EXCEEDED' }), false)
+  assert.equal(fallbackRetryable(undefined), false)
+})
+
+test('tool gate matches opencode model-family gating on both sides', () => {
+  assert.equal(opencodeUsesPatch('gpt-5.5'), true)
+  assert.equal(opencodeUsesPatch('gpt-5-oss'), false)
+  assert.equal(opencodeUsesPatch('gpt-4'), false)
+  assert.equal(opencodeUsesPatch('claude-opus-4-7'), false)
+  assert.equal(gateToolCall('edit', 'gpt-5.5') !== undefined, true)
+  assert.equal(gateToolCall('apply_patch', 'gpt-5.5'), undefined)
+  assert.equal(gateToolCall('apply_patch', 'claude-opus-4-7') !== undefined, true)
+  assert.equal(gateToolCall('edit', 'claude-opus-4-7'), undefined)
+})
+
+test('hephaestus routes to the extracted GPT-5.5 family prompt', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'omo-hephaestus-'))
+  try {
+    const ctx = { tools: { schemas: () => [] } }
+    const prompt = systemPromptFor(ctx, roleFace('hephaestus'), mockState(), mockAgent(cwd, [], 'gpt-5.5'))
+    assert.match(prompt, /You are Hephaestus, an autonomous deep worker based on GPT-5\.5/)
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
+test('atlas routes to the extracted opus-4-7 family prompt', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'omo-atlas-'))
+  try {
+    const ctx = { tools: { schemas: () => [] } }
+    const prompt = systemPromptFor(ctx, roleFace('atlas'), mockState(), mockAgent(cwd, [], 'claude-opus-4-7'))
+    assert.match(prompt, /You are Atlas - the Master Orchestrator/)
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
+test('maxSteps prefill is an assistant-role model message with verbatim opencode text', () => {
+  const agent = mockAgent(process.cwd(), [], 'gpt-5.5')
+  const prefill = maxStepsPrefillFor(agent)
+  assert.equal(prefill.role, 'assistant')
+  assert.equal(prefill.source.kind, 'model')
+  assert.equal(prefill.source.model, 'gpt-5.5')
+  assert.match(prefill.content[0].text, /CRITICAL - MAXIMUM STEPS REACHED/)
+  assert.match(prefill.content[0].text, /Respond with text ONLY\./)
+})
+
+test('unknown model families use the omo dynamic Sisyphus fallback prompt', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'omo-fallback-'))
+  try {
+    const ctx = { tools: { schemas: () => [] } }
+    const prompt = systemPromptFor(ctx, roleFace(), mockState(), mockAgent(cwd, [], 'deepseek-v4'))
+    assert.match(prompt, /Powerful AI Agent with orchestration capabilities from OhMyOpenCode/)
+    assert.match(prompt, /Phase 2A - Exploration & Research/)
+    assert.doesNotMatch(prompt, /You are opencode, an interactive CLI tool/)
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
+test('rules renderer returns empty text when no rule files exist', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'omo-norules-'))
+  try {
+    assert.equal(renderRulesFor(cwd), '')
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})

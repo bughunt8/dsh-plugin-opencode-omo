@@ -1,0 +1,115 @@
+diff --git a/packages/core/agent-loop/src/agent.ts b/packages/core/agent-loop/src/agent.ts
+index 668ef65..d423ded 100644
+--- a/packages/core/agent-loop/src/agent.ts
++++ b/packages/core/agent-loop/src/agent.ts
+@@ -16,7 +16,7 @@ import type {
+   RequestErrorAction,
+ } from '@deepseek-ai/dsh-agent'
+ import { Inbox, agentEvents, assembleContextFor } from '@deepseek-ai/dsh-agent'
+-import type { GenerateOptions, LlmCallConfig, Message, PreparedLlmCall } from '@deepseek-ai/dsh-llm'
++import type { AssistantMessage, GenerateOptions, LlmCallConfig, Message, PreparedLlmCall } from '@deepseek-ai/dsh-llm'
+ import {
+   BlockAssembler,
+   LlmError,
+@@ -49,7 +49,7 @@ type StepEndReason = Extract<TurnEndReason, { kind: 'completed' | 'max-tokens' }
+ 
+ type PreparedStep =
+   | { kind: 'reject' }
+-  | { kind: 'enter'; messages: UserMessage[]; assembly: PromptAssembly }
++  | { kind: 'enter'; messages: UserMessage[]; assembly: PromptAssembly; assistantPrefill?: AssistantMessage }
+ 
+ /** Remove adapter-derived values before plugins propose the next request config. */
+ function requestProposal(header: EpochHeader): LlmCallConfig {
+@@ -282,6 +282,13 @@ export class ReactLoopAgent implements Agent {
+           for (const message of decision.messages) {
+             this.session.append('user/message', message, { surfaceOp: 'append' })
+           }
++          if (decision.assistantPrefill !== undefined) {
++            this.session.append(
++              'assistant/message',
++              { turn, step, message: decision.assistantPrefill },
++              { surfaceOp: 'append' },
++            )
++          }
+           // max-tokens is sticky: once any step hits the ceiling, later steps
+           // that complete normally must not downgrade the turn outcome.
+           const stepEnd = await this.step(decision.assembly)
+diff --git a/packages/core/agent-loop/tests/interception.spec.ts b/packages/core/agent-loop/tests/interception.spec.ts
+index 72e3165..2dc31af 100644
+--- a/packages/core/agent-loop/tests/interception.spec.ts
++++ b/packages/core/agent-loop/tests/interception.spec.ts
+@@ -1,6 +1,6 @@
+ import { describe, expect, it, vi } from 'vitest'
+ import { Context } from '@deepseek-ai/cordis'
+-import LlmRuntime, { createUserMessage, CallId  } from '@deepseek-ai/dsh-llm'
++import LlmRuntime, { createAssistantMessage, createUserMessage, CallId  } from '@deepseek-ai/dsh-llm'
+ import SessionStore, {
+   SessionId,
+   type SessionEvent,
+@@ -78,6 +78,34 @@ describe('agent/pre-step', () => {
+     expect(userMsg?.type === 'user/message' && userMsg.data.content).toEqual([{ type: 'text', text: 'hello' }])
+   })
+ 
++  it('records an optional assistant prefill after the user messages and before the request', async () => {
++    const adapter = new MockAdapter([textResponse('ok')])
++    const ctx = await harness(adapter)
++    const agent = ctx.agentLoop.create(SessionId('assistant-prefill'), { provider: 'mock', model: 'mock' })
++    ctx.on('agent/pre-step', async (_payload, next) => {
++      const decision = await next()
++      if (decision.kind === 'reject') return decision
++      return {
++        ...decision,
++        assistantPrefill: createAssistantMessage({
++          content: [{ type: 'text', text: 'forced continuation' }],
++          source: { provider: 'mock', model: 'mock' },
++        }),
++      }
++    })
++
++    send(agent, 'hello')
++    await waitForIdle(ctx, agent)
++
++    const assistantMessages = events(agent).filter(event => event.type === 'assistant/message')
++    expect(assistantMessages).toHaveLength(2)
++    const prefill = assistantMessages[0]
++    expect(prefill?.type === 'assistant/message' && prefill.data.message.content).toEqual([{ type: 'text', text: 'forced continuation' }])
++    // The prefill lands between the step's user message and the model response.
++    const order = events(agent).map(event => event.type)
++    expect(order.indexOf('assistant/message')).toBeLessThan(order.indexOf('assistant/chunk'))
++  })
++
+   it('reports the request coordinates for initial and tool-continuation prompts', async () => {
+     const adapter = new MockAdapter([
+       toolCallResponse('c1', 'echo', { text: 'hi' }),
+diff --git a/packages/core/agent/src/runtime-types.ts b/packages/core/agent/src/runtime-types.ts
+index 7d713f8..dfe06a6 100644
+--- a/packages/core/agent/src/runtime-types.ts
++++ b/packages/core/agent/src/runtime-types.ts
+@@ -8,7 +8,7 @@
+ import type { Context } from '@deepseek-ai/cordis'
+ import type { Scoped } from '@deepseek-ai/dsh-scope'
+ import type { LlmCallConfig, LlmFailure, ResolvedRetryPolicy } from '@deepseek-ai/dsh-llm'
+-import type { AgentCancelCause, Session, SessionId, UserMessage } from '@deepseek-ai/dsh-session'
++import type { AgentCancelCause, AssistantMessage, Session, SessionId, UserMessage } from '@deepseek-ai/dsh-session'
+ export type { AgentCancelCause } from '@deepseek-ai/dsh-session'
+ import type { Inbox } from './inbox.ts'
+ import type { InboxTarget } from './types.ts'
+@@ -52,7 +52,17 @@ export type AgentStatus = 'idle' | 'running'
+ /** Whether and with which messages the loop enters a proposed step. */
+ export type PreStepDecision =
+   | { kind: 'reject' }
+-  | { kind: 'enter'; messages: UserMessage[] }
++  | {
++    kind: 'enter'
++    messages: UserMessage[]
++    /**
++     * Optional assistant-role continuation recorded after the step's user
++     * messages and before the model request, so derived request history ends
++     * with an assistant prefill (e.g. a forced text-only continuation such as
++     * a max-steps reminder). Omission preserves the historical behavior.
++     */
++    assistantPrefill?: AssistantMessage
++  }
+ 
+ /** Action returned by a listener that owns model-request recovery. */
+ export type RequestErrorAction = { kind: 'retry' } | undefined

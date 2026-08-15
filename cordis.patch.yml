@@ -1,0 +1,14 @@
+# Bundle patch for @royenheart/dsh-plugin-opencode-omo.
+# The package's own host row: role registry service (`ctx.omoRoles`),
+# `opencode-omo-roles` settings namespace, and the browser role/config HTTP
+# routes. The bundle patch is the same layer that ships the preset, so the
+# driver always finds the registry it reads.
+#
+# The `opencode-omo` agent preset itself is published through dsh's native
+# USER preset root: install.py links `$DSH_HOME/.agent-presets/opencode-omo`
+# to the package's `presets/opencode-omo`, which the agent-presets service
+# always scans (includeUserRoot). No dsh-side patch or root-merging change is
+# required.
+- insert:
+    - id: opencode-omo
+      name: '@royenheart/dsh-plugin-opencode-omo'
