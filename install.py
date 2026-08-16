@@ -33,6 +33,16 @@ from pathlib import Path
 
 PACKAGE = "@royenheart/dsh-plugin-opencode-omo"
 
+# LSP servers the preset preconfigures. The preset now self-disables its
+# `lsp-stdio` row when a command is missing, so a missing server never breaks
+# the whole mode; installation still reports the gap with the fix command.
+LSP_SERVER_COMMANDS = {
+    "typescript": (
+        "typescript-language-server",
+        "npm install -g typescript-language-server typescript",
+    ),
+}
+
 
 def repo_root() -> Path:
     return Path(__file__).resolve().parent
@@ -195,6 +205,27 @@ def ensure_lsp_links(home: str) -> None:
         ensure_link(scope / name, target)
 
 
+def check_lsp_servers() -> None:
+    """Warn about missing LSP server executables without failing the install.
+
+    The preset disables its `lsp-stdio` row when a server command is absent,
+    so the opencode-omo mode stays selectable; this message tells the user how
+    to re-enable LSP support.
+    """
+    missing = [
+        (server, command, install_hint)
+        for server, (command, install_hint) in LSP_SERVER_COMMANDS.items()
+        if shutil.which(command) is None
+    ]
+    if not missing:
+        return
+    print("WARNING: LSP server commands are missing from PATH; opencode-omo still installs, "
+          "but the preset will run with LSP disabled until they are installed:")
+    for server, command, install_hint in missing:
+        print(f"  - {server}: {command} (install: {install_hint})")
+    print("  Install the commands and restart dsh to enable LSP.")
+
+
 def install(args: argparse.Namespace) -> None:
     profile = profile_dir(args.home, args.profile)
     ensure_profile(profile)
@@ -205,6 +236,7 @@ def install(args: argparse.Namespace) -> None:
     ensure_built(root)
     ensure_preset_runtime_links(root, args.home)
     ensure_lsp_links(args.home)
+    check_lsp_servers()
     ensure_user_preset_link(root, args.home)
 
     # 1. Symlink the package into the profile node_modules (idempotent).

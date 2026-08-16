@@ -49,6 +49,9 @@
 
     - id: lsp-stdio
       name: '@deepseek-ai/dsh-lsp-stdio'
+      # Graceful degradation: without the server binary this row disables itself
+      # (lsp-service + tool-lsp stay mounted), so the whole preset still loads.
+      disabled: !!js '!(function () { try { const { spawnSync } = process.getBuiltinModule("node:child_process"); return spawnSync("typescript-language-server", ["--version"], { stdio: "ignore", timeout: 5000 }).error === undefined } catch { return false } })()'
       config:
         servers:
           typescript:
