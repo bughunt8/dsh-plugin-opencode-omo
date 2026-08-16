@@ -205,6 +205,17 @@ def ensure_lsp_links(home: str) -> None:
         ensure_link(scope / name, target)
 
 
+def ensure_web_fetch_link(home: str) -> None:
+    """The bundle patch registers the native HTTP fetch provider for the
+    preset's web_fetch tool; link its package into the shared profile module
+    tree (it is not part of the base bundle)."""
+    root = dsh_install_root(home)
+    target = root / "packages" / "web" / "web-fetch-http"
+    if not target.exists():
+        raise SystemExit("required dsh web fetch package missing: " + str(target))
+    ensure_link(shared_node_modules(home) / "@deepseek-ai" / "dsh-web-fetch-http", target)
+
+
 def check_lsp_servers() -> None:
     """Warn about missing LSP server executables without failing the install.
 
@@ -236,6 +247,7 @@ def install(args: argparse.Namespace) -> None:
     ensure_built(root)
     ensure_preset_runtime_links(root, args.home)
     ensure_lsp_links(args.home)
+    ensure_web_fetch_link(args.home)
     check_lsp_servers()
     ensure_user_preset_link(root, args.home)
 

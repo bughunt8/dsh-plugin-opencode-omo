@@ -9,6 +9,14 @@
 # to the package's `presets/opencode-omo`, which the agent-presets service
 # always scans (includeUserRoot). No dsh-side patch or root-merging change is
 # required.
+#
+# The preset enables dsh's native web_fetch tool (`fetch: true` in its
+# `tool-web` row), so this bundle also registers the native HTTP fetch
+# provider into the shared `ctx.web`. With exactly one fetch provider
+# registered, dsh's web seam auto-selects it; no `web` row override is needed.
 - insert:
     - id: opencode-omo
       name: '@royenheart/dsh-plugin-opencode-omo'
+
+    - id: opencode-omo-web-fetch
+      name: '@deepseek-ai/dsh-web-fetch-http'

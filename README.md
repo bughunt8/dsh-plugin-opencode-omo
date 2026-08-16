@@ -77,6 +77,8 @@ npm install -g typescript-language-server typescript
 
 then restart dsh.
 
+**web_fetch provider.** The preset enables dsh's native `web_fetch` tool, so the bundle patch also registers the native HTTP fetch provider (`@deepseek-ai/dsh-web-fetch-http`) into the shared `ctx.web`; `install.py` links that package into the profile module tree. `web_search` keeps using the existing DeepSeek search provider (`DEEPSEEK_API_KEY`). Other presets keep `fetch: false`, so their tool surface is unchanged.
+
 ## Required dsh-side changes
 
 **This release depends on one dsh-side patch.** Apply it to deepseek-harness for full maxSteps fidelity; the patches are under [`patches/`](patches/README.md), split by feature:
