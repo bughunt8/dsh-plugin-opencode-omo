@@ -21,10 +21,7 @@ import type { RoleSelectInjected } from './RoleSelect.tsx'
 import { RoleSettingsSection } from './RoleSettings.tsx'
 import type { RoleSettingsInjected } from './RoleSettings.tsx'
 import type { OmoCatalogModel } from './omo-wire.ts'
-// Local SlotMap declarations keep this package typechecking against pnpm's
-// separately-resolved ui-conversation/ui-settings copies (see slots.ts).
 import type {} from './slots.ts'
-
 export { RoleSelect } from './RoleSelect.tsx'
 export type { RoleSelectInjected, RoleSelectProps } from './RoleSelect.tsx'
 export { RoleSettingsSection } from './RoleSettings.tsx'

@@ -1,7 +1,7 @@
 # Reference source checkouts (opencode + oh-my-openagent) — read-only study material, not part of the plugin.
 reference/
 
-# Build output
+# Build output (lib/ is generated locally by npm run build, not committed)
 lib/
 node_modules/
 *.tsbuildinfo
@@ -31,7 +31,6 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
 lib64/
 parts/
 sdist/

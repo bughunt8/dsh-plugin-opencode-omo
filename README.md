@@ -43,30 +43,22 @@ presets/opencode-omo/
 
 ## Install
 
-Build the package first (host + client bundles):
+`lib/` is generated locally and is not committed. `install.py` builds the repository's own toolchain first (`npm install` + `npm run build`) and only reports an error when npm itself is missing:
 
 ```sh
-npm run build
+python3 install.py install --profile web              # install (idempotent)
+python3 install.py uninstall --profile web            # remove
 ```
 
-`install.py` then automates install/uninstall idempotently — it symlinks the package into `~/.dsh/profiles/<profile>/node_modules/`, edits the profile's `package.json` (adds/removes the dependency + bundle entry), and publishes the preset through dsh's native user preset root as a real directory under `$DSH_HOME/.agent-presets/opencode-omo` (entries symlinked into the package, so updates stay live):
+`install.py` symlinks the package into `~/.dsh/profiles/<profile>/node_modules/`, edits the profile's `package.json` (adds/removes the dependency + bundle entry), and publishes the preset through dsh's native user preset root as a real directory under `$DSH_HOME/.agent-presets/opencode-omo` (entries symlinked into the package, so updates stay live):
 
-```sh
-python3 install.py --profile web              # install (idempotent)
-python3 install.py --profile web --uninstall  # remove
-```
-
-Manual alternative — the package is a dsh **bundle**: it declares `dsh.bundle.patch` and ships the preset. Load it into a profile:
+Manual alternative — the package is a dsh **bundle**: it declares `dsh.bundle.patch` and ships the preset. `dsh plugin` reconciles `dsh.profile.bundles` from the installed package automatically:
 
 ```sh
 dsh plugin --profile web add link:/path/to/dsh-plugin-opencode-omo
 ```
 
-then add it to the profile's bundle list in `$DSH_HOME/profiles/web/package.json` and create the user-root preset directory yourself:
-
-```json
-"dsh": { "profile": { "bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app", "@royenheart/dsh-plugin-opencode-omo"] } }
-```
+The preset still needs its user-root publication (the bundle patch cannot create `$DSH_HOME/.agent-presets` entries):
 
 ```sh
 mkdir -p "$DSH_HOME/.agent-presets/opencode-omo"
@@ -118,7 +110,7 @@ Full report: `docs/exps/2026-08-15-opencode-omo-equivalence-bench.md`; raw trans
 ## Alignment status (audited against reference/opencode + reference/oh-my-openagent)
 
 - **Aligned**: opencode default persona (complete system prompt + live env block whose provider/model now follow the same per-step route as the actual request — session live model selection or the role primary/fallback — so prompt and request cannot split; workspace root now derived as the git root); opencode tool families + gpt apply_patch/edit-write tool gating enforced on BOTH the model-visible schema and execution (`tools/pre-execute` deny mirror); opencode maxSteps + verbatim MAX_STEPS_PROMPT; verbatim opencode plan.txt / plan-mode.txt with dynamic `${planInfo}` and the plan→build BUILD_SWITCH reminder; omo role catalog/display names; sisyphus/hephaestus/atlas/sisyphus-junior + specialist subagents; comment-checker/hashline/rules-injector hooks; generated Sisyphus routing sections; extracted omo Sisyphus model-family templates (GPT-5.5/GPT-5.4/claude-opus-4-7/claude-opus-4-8/claude-fable-5/gemini/kimi-k3/kimi-k2-7/kimi-k2-6/glm-5-2, with the dynamic Sisyphus fallback for unknown families) plus hephaestus GPT variants, all 8 atlas variants, and specialist model variants (oracle/metis/momus); omo-default per-role PRIMARY model resolution (provider-scope ordered) and fallback chains that start AFTER the primary; omo role sampling defaults (sisyphus/hephaestus GPT effort medium, atlas temperature 0.1); omo-style retryable-error gating before fallback advance; reasoning-effort selectors in role settings; ultrawork keyword override; `/start-work`, `/remove-ai-slops`, `/refactor`, `/stop-continuation`, `/handoff`, `/hyperplan`, `/team-mode` commands; composer role picker + global per-role model/fallback settings; omo skills published as `user-dsh` so the third-party skills-manager can manage them. The omo rules-injector text is now folded into the complete system prompt (`driver.mjs` + `rules.mjs`) instead of being dropped by `suppressRuntimeContext()`; approved plans are persisted at `.opencode/plans/<created>-<session>.md`; specialist subagent personas now load the extracted reference prompt files (oracle/librarian/explore/metis/momus/multimodal-looker).
-- **MCP**: separate plugin [`dsh-plugin-mcp-support`](../dsh-plugin-mcp-support) mounts native `@deepseek-ai/dsh-mcp-client` servers from composition config or the persisted `mcp-suppor` settings namespace. (The directory was renamed from `dsh-plugin-mcp-suppor`; the npm id and settings namespace inside that repository still use the old spelling until that repository is updated.)
+- **MCP**: separate plugin [`dsh-plugin-mcp-support`](../dsh-plugin-mcp-support) mounts native `@deepseek-ai/dsh-mcp-client` servers from its bundle-row config or the persisted `mcp-support` settings namespace.
 - **Structured output**: separate plugin [`dsh-plugin-structured-output`](../dsh-plugin-structured-output) provides opencode-style `/json-schema` + `StructuredOutput` validation on native seams (no dsh-side format field).
 - **Partial**: extracted family templates keep dynamic sections filled by dsh-native data rather than omo's builder output; structured output is tool-enforced rather than `tool_choice: required`; hooks are regex/simplified ports; AGENTS.md injection is dsh-native; child subagents inherit the session model because dsh child headers/descriptors do not carry the subagent role id (primary-role sampling defaults ARE applied).
 - **Requires one dsh-side patch (see `patches/`, audited 2026-08-15)**: `PreStepDecision.assistantPrefill` for opencode's MAX_STEPS_PROMPT. Provider-visible `format`/`toolChoice` remains a proposal; omo's regular path does not use it and the standalone structured-output plugin covers the common route.

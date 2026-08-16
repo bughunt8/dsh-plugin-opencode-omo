@@ -3,12 +3,16 @@
  * occupies. It mirrors the owning package's declaration — declared here too so
  * the plugin's own typecheck sees the seat even when the installed owner
  * typings resolve through a different package tree (pnpm copies) than the
- * runtime's ui-slots copy. The owning plugin still declares it at runtime;
- * this file is type-only.
+ * runtime's ui-slots copy. When the installed owner typings resolve to the
+ * same physical copy, its declaration already covers the seat and the
+ * duplicate property is ignored below. The owning plugin still declares the
+ * seat at runtime; this file is type-only.
  */
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface SlotMap {
+    // @ts-ignore - duplicate declaration is expected and harmless when the
+    // installed ui-conversation typings already declare the same seat.
     'conversation.input.left': {
       kind: 'list'
       scope: 'session'

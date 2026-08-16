@@ -17,12 +17,17 @@ Usage:
     python3 install.py install [--profile web] [--home ~/.dsh]
     python3 install.py uninstall [--profile web] [--home ~/.dsh]
 
-Requires only the Python standard library.
+Requires the Python standard library plus Node.js/npm. Built bundles are not
+versioned: when `lib/` is missing, the script builds the repository's own
+toolchain (`npm install` + `npm run build`) before installing; only a missing
+npm reports an error instead of continuing.
 """
 
 import argparse
 import json
 import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -123,6 +128,40 @@ def ensure_user_preset_link(root: Path, home: str) -> None:
         ensure_link(preset / entry.name, entry)
 
 
+def ensure_built(root: Path) -> None:
+    """Make sure the host/client bundles exist.
+
+    `lib/` is generated locally, not versioned. A fresh clone therefore
+    bootstraps the repository's own toolchain: `npm install` provisions the
+    devDependencies (and peer dependencies) inside this checkout, then
+    `npm run build` emits the bundles. An already-built checkout skips the
+    toolchain step; a machine without npm gets an actionable error.
+    """
+    required = [root / "lib" / "index.js", root / "lib" / "client.js"]
+    if all(path.exists() for path in required):
+        return
+    npm = shutil.which("npm")
+    if npm is None:
+        raise SystemExit(
+            "built bundles missing and npm is not on PATH - install Node.js/npm, "
+            "then run `npm install && npm run build` inside " + str(root)
+        )
+    print("built bundles missing - bootstrapping toolchain and building (npm install + npm run build)...")
+    try:
+        subprocess.run([npm, "install"], cwd=root, check=True)
+        subprocess.run([npm, "run", "build"], cwd=root, check=True)
+    except subprocess.CalledProcessError as error:
+        raise SystemExit(
+            "bootstrap build failed (npm exit " + str(error.returncode) + ") - "
+            "run `npm install` and `npm run build` inside " + str(root) + " to see the diagnostics"
+        ) from error
+    missing = [str(path) for path in required if not path.exists()]
+    if missing:
+        raise SystemExit(
+            "bootstrap build finished but produced no artifacts: " + ", ".join(missing)
+        )
+
+
 def ensure_preset_runtime_links(root: Path, home: str) -> None:
     """The preset's local .mjs modules resolve bare harness packages from the
     symlinked package's own node_modules (Node realpaths the symlink), so the
@@ -160,13 +199,10 @@ def install(args: argparse.Namespace) -> None:
     profile = profile_dir(args.home, args.profile)
     ensure_profile(profile)
 
-    # 0. The package now ships built host/client bundles; refuse to install
-    #    an unbuilt checkout (the bundle patch also mounts the host row).
+    # 0. Ensure the shipped host/client bundles exist; bootstrap the npm
+    #    toolchain and build when a source-only checkout lacks them.
     root = repo_root()
-    if not (root / "lib" / "index.js").exists() or not (root / "lib" / "client.js").exists():
-        raise SystemExit(
-            "built bundles missing - run `npm run build` (or ./scripts/build.sh) first"
-        )
+    ensure_built(root)
     ensure_preset_runtime_links(root, args.home)
     ensure_lsp_links(args.home)
     ensure_user_preset_link(root, args.home)

@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
-# Build this package with the toolchain borrowed from the sibling
-# dsh-plugin-server checkout (the plugin workspace has no pnpm install).
-# `node_modules` is a symlink to that package's installed toolchain.
+# Build this package with its own npm toolchain (`npm install` provides
+# node_modules). No sibling-checkout assumptions: on a fresh clone, run
+# `npm install` once (install.py does this automatically when lib/ is
+# missing), then `npm run build`.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-if [[ ! -d node_modules/.bin ]]; then
-  ln -s ../dsh-plugin-server/node_modules node_modules
+if [[ ! -x node_modules/.bin/tsc || ! -x node_modules/.bin/tsdown ]]; then
+  echo "build toolchain missing - run: npm install" >&2
+  exit 1
 fi
 
 node_modules/.bin/tsc --noEmit -p tsconfig.json
