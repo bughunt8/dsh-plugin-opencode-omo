@@ -43,7 +43,7 @@ presets/opencode-omo/
 
 ## Install
 
-`lib/` is generated locally and is not committed. `install.py` builds the repository's own toolchain first (`npm install` + `npm run build`) and only reports an error when npm itself is missing:
+`lib/` is generated locally and is not committed. `install.py` always builds the repository's own toolchain first (`npm install` when the toolchain is missing, then `npm run build`) and only reports an error when npm itself is missing:
 
 ```sh
 python3 install.py install --profile web              # install (idempotent)
