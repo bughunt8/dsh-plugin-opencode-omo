@@ -18,12 +18,16 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { ConnectionHandle, SessionId } from '@deepseek-ai/dsh-client-connection/client'
 import { RoleSelect } from './RoleSelect.tsx'
 import type { RoleSelectInjected } from './RoleSelect.tsx'
+import { OmoSettingsSection } from './OmoSettingsSection.tsx'
+import type { OmoSettingsSectionProps } from './OmoSettingsSection.tsx'
 import { RoleSettingsSection } from './RoleSettings.tsx'
 import type { RoleSettingsInjected } from './RoleSettings.tsx'
 import type { OmoCatalogModel } from './omo-wire.ts'
 import type {} from './slots.ts'
 export { RoleSelect } from './RoleSelect.tsx'
 export type { RoleSelectInjected, RoleSelectProps } from './RoleSelect.tsx'
+export { OmoSettingsSection } from './OmoSettingsSection.tsx'
+export type { OmoSettingsSectionProps } from './OmoSettingsSection.tsx'
 export { RoleSettingsSection } from './RoleSettings.tsx'
 export type { RoleSettingsInjected, RoleSettingsProps } from './RoleSettings.tsx'
 
@@ -99,8 +103,18 @@ export function apply(ctx: Context): void {
 
     const disposeSettings = ctx.slots.inject('settings.section', () => ctx.slots.register({
       name: 'settings.section',
-      id: 'opencode-omo-roles',
+      id: 'opencode-omo',
       order: 40,
+      label: () => 'opencode-omo',
+      children: {
+        'opencode-omo.settings.tab': { kind: 'list', scope: 'root' },
+      },
+    }, OmoSettingsSection))
+
+    const disposeSettingsTab = ctx.slots.inject('opencode-omo.settings.tab', () => ctx.slots.register({
+      name: 'opencode-omo.settings.tab',
+      id: 'roles',
+      order: 0,
       label: () => '角色设置',
       inject: (): RoleSettingsInjected => ({
         rolesEndpoint: ROLES_ENDPOINT,
@@ -111,6 +125,7 @@ export function apply(ctx: Context): void {
 
     return () => {
       disposeRole()
+      disposeSettingsTab()
       disposeSettings()
     }
   }, 'opencode-omo-client: role slots')

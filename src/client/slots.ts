@@ -18,6 +18,12 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
       scope: 'session'
       owner: { readonly session: unknown; readonly input: unknown }
     }
+    /** Plugin-owned nested tab inside the opencode-omo settings section. */
+    'opencode-omo.settings.tab': {
+      kind: 'list'
+      scope: 'root'
+      owner: { readonly children?: never }
+    }
   }
 }
 
