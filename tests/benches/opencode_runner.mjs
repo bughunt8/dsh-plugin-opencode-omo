@@ -20,9 +20,14 @@ function opencodeEnv() {
 function run(command, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
-      env: opencodeEnv(),
-      stdio: ['ignore', 'pipe', 'pipe'],
       ...options,
+      env: {
+        ...opencodeEnv(),
+        // opencode resolves its working directory from $PWD rather than
+        // getcwd(); keep both in sync so spawn(cwd) is honored.
+        ...(options.cwd === undefined ? {} : { PWD: options.cwd }),
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
     })
     let stdout = ''
     let stderr = ''
@@ -35,7 +40,7 @@ function run(command, args, options = {}) {
 
 export async function runOpencodeTask(task, options = {}) {
   const dir = options.cwd ?? process.cwd()
-  const args = ['run', '--format', 'json', '--thinking', '--agent', AGENT, '-m', MODEL]
+  const args = ['run', '--format', 'json', '--thinking', '--dir', dir, '--agent', AGENT, '-m', MODEL]
   if (options.dangerouslySkipPermissions) args.push('--dangerously-skip-permissions')
   args.push(task)
   const result = await run(OPENCODE_BIN, args, { cwd: dir })

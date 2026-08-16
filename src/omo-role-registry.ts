@@ -19,6 +19,8 @@ import type { SettingsScope } from '@deepseek-ai/dsh-settings'
 import {
   OMO_DEFAULT_ROLE, OMO_ROLES, OMO_ROLE_FALLBACK_MODELS, OMO_ROLE_FALLBACK_PROVIDERS, emptyRoleConfig, isOmoRole, normalizeOmoRole,
 } from './core/omo-roles.ts'
+import { detectDshCompat } from './core/dsh-capabilities.ts'
+import type { DshCompat } from './core/dsh-capabilities.ts'
 import type {
   OmoModelSelection, OmoRoleConfig, OmoRoleSettings, OmoUltraworkOverride, StoredOmoRoleConfig,
 } from './core/omo-roles.ts'
@@ -60,6 +62,8 @@ export interface OmoRoleRegistryFace {
   fallbackModelsFor(role: string): OmoModelSelection[]
   /** Catalog-resolved omo default primary per role (no user settings applied). */
   defaults(): Record<string, OmoModelSelection | null>
+  /** Detected dsh-side seam support (drives fallbacks and browser warnings). */
+  readonly compat: DshCompat
 }
 
 declare module '@deepseek-ai/cordis' {
@@ -129,6 +133,7 @@ export class OmoRoleRegistry extends Service {
   private readonly sessionOverrides = new Map<string, string>()
   private readonly defaultFallbacks = new Map<string, OmoModelSelection[]>()
   private refreshing: Promise<void> | undefined
+  readonly compat: DshCompat = detectDshCompat()
 
   constructor(ctx: Context, config: OmoRoleRegistryConfig) {
     super(ctx, 'omoRoles')

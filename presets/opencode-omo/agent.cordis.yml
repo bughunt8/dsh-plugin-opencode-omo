@@ -253,7 +253,6 @@
             - explore
             - metis
             - momus
-            - looker
             - multimodal-looker
             - workflow
             - ralph
@@ -277,7 +276,6 @@
             - explore
             - metis
             - momus
-            - looker
             - multimodal-looker
             - workflow
             - ralph
@@ -301,7 +299,6 @@
             - explore
             - metis
             - momus
-            - looker
             - multimodal-looker
             - workflow
             - ralph
@@ -325,7 +322,6 @@
             - explore
             - metis
             - momus
-            - looker
             - multimodal-looker
             - workflow
             - ralph
@@ -349,7 +345,6 @@
             - explore
             - metis
             - momus
-            - looker
             - multimodal-looker
             - workflow
             - ralph
@@ -389,7 +384,6 @@
             - multimodal-looker
             - sisyphus
             - hephaestus
-            - prometheus
             - atlas
             - sisyphus-junior
             - workflow
@@ -414,7 +408,6 @@
             - multimodal-looker
             - sisyphus
             - hephaestus
-            - prometheus
             - atlas
             - sisyphus-junior
             - workflow
@@ -439,7 +432,6 @@
             - multimodal-looker
             - sisyphus
             - hephaestus
-            - prometheus
             - atlas
             - sisyphus-junior
             - workflow
@@ -464,7 +456,6 @@
             - multimodal-looker
             - sisyphus
             - hephaestus
-            - prometheus
             - atlas
             - sisyphus-junior
             - workflow

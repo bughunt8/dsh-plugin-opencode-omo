@@ -14,6 +14,6 @@
     npm run build:lib:host
     npx vitest run packages/core/agent-loop/tests/interception.spec.ts
     ```
-  - 未打此补丁时：插件其余功能仍可运行，但 `agent/pre-step` 返回的 `assistantPrefill` 会被旧 loop 忽略，因此 **maxSteps 提示不会注入**；maxSteps 保真依赖此补丁。
+  - 未打此补丁时：插件其余功能仍可运行。host 插件通过扫描已安装 `@deepseek-ai/dsh-agent-loop` 的编译产物检测该能力；检测不到时 `agent/pre-step` 自动降级为**等文本的合成 user 消息**注入 `MAX_STEPS_PROMPT`（不再静默丢失，仅角色语义非 assistant），并通过浏览器 `Toast` 提示用户应用本补丁。maxSteps 的完全保真仍依赖此补丁。
 
 补丁生成基线：`dev = master(47f9438) + 3811c90 + 1a9442d`。

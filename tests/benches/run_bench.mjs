@@ -26,24 +26,31 @@ try {
     const safeId = encodeURIComponent(id)
     const prompt = level === 'mbpp' ? mbppPrompt(item) : humanEvalPrompt(item)
     console.log(`[${index + 1}/${items.length}] ${id}`)
-    const workdir = mkdtempSync(join(tmpdir(), 'omo-bench-task-'))
-    const readSolution = () => {
-      try { return readFileSync(join(workdir, 'solution.py'), 'utf8') } catch { return undefined }
+    // Separate workdirs: a shared dir lets the first system's solution.py leak
+    // into the second run (opencode's first write then errors spuriously), which
+    // distorts both the tool chain and the tool-timing comparison.
+    const workdirs = {
+      dsh: mkdtempSync(join(tmpdir(), 'omo-bench-dsh-')),
+      opencode: mkdtempSync(join(tmpdir(), 'omo-bench-oc-')),
+    }
+    const readSolution = (system) => {
+      try { return readFileSync(join(workdirs[system], 'solution.py'), 'utf8') } catch { return undefined }
     }
     const row = { id, prompt, dsh: undefined, opencode: undefined }
     try {
-      const dsh = await runDshTask(prompt, { timeoutMs: 900_000, cwd: workdir })
-      row.dsh = { sessionId: dsh.sessionId, events: dsh.events, solution: readSolution() }
+      const dsh = await runDshTask(prompt, { timeoutMs: 900_000, cwd: workdirs.dsh })
+      row.dsh = { sessionId: dsh.sessionId, events: dsh.events, solution: readSolution('dsh') }
     } catch (error) {
       row.dsh = { error: String(error) }
     }
     try {
-      const oc = await runOpencodeTask(prompt, { dangerouslySkipPermissions: true, cwd: workdir })
-      row.opencode = { sessionId: oc.sessionId, events: oc.events, exported: oc.exported, exitCode: oc.exitCode, solution: readSolution() }
+      const oc = await runOpencodeTask(prompt, { dangerouslySkipPermissions: true, cwd: workdirs.opencode })
+      row.opencode = { sessionId: oc.sessionId, events: oc.events, exported: oc.exported, exitCode: oc.exitCode, solution: readSolution('opencode') }
     } catch (error) {
       row.opencode = { error: String(error) }
     }
-    rmSync(workdir, { recursive: true, force: true })
+    rmSync(workdirs.dsh, { recursive: true, force: true })
+    rmSync(workdirs.opencode, { recursive: true, force: true })
     writeFileSync(new URL(`${safeId}.json`, outDir), JSON.stringify(row, null, 2))
     summarize.push({
       id: safeId,

@@ -235,3 +235,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+tmp
+tests/benches/solution.py
+tests/benches/cwd-check.txt

@@ -34,9 +34,26 @@ export function humanEvalPrompt(item) {
   return codingPrompt(`${item.prompt}\nFunction name: ${item.entry_point}`, { withTests: tests })
 }
 
+/**
+ * MBPP rows carry no entry_point; the ground-truth function name lives in the
+ * first assert (`assert name(`) or in the reference code's `def name(`.
+ * Prompting `Function name: undefined` (the old behavior) makes both systems
+ * spend effort on a benchmark artifact and drives pass/trace divergence.
+ */
+export function mbppEntryPoint(item) {
+  const testText = Array.isArray(item.test_list) ? item.test_list.join(' ') : String(item.test_list ?? '')
+  const fromAssert = testText.match(/\bassert\s+([A-Za-z_]\w*)\s*\(/)
+  if (fromAssert !== null) return fromAssert[1]
+  const fromCode = String(item.code ?? '').match(/^def\s+([A-Za-z_]\w*)/m)
+  if (fromCode !== null) return fromCode[1]
+  const fromText = String(item.text ?? '').match(/\b([A-Za-z_]\w*)\s*\(/)
+  return fromText?.[1] ?? 'undefined'
+}
+
 export function mbppPrompt(item) {
-  const tests = `from solution import ${item.entry_point}\n${item.test_list.join('\n')}`
-  return codingPrompt(`${item.text}\nFunction name: ${item.entry_point}`, { withTests: tests })
+  const entryPoint = mbppEntryPoint(item)
+  const tests = `from solution import ${entryPoint}\n${item.test_list.join('\n')}`
+  return codingPrompt(`${item.text}\nFunction name: ${entryPoint}`, { withTests: tests })
 }
 
 export function extractPythonCode(text) {

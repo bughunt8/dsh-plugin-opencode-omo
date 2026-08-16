@@ -7,13 +7,13 @@ import { join } from 'node:path'
 import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import {
-  dshTrace, extractPythonCode, loadHumanEval, loadMbpp, opencodeTrace, tokenJaccard,
+  dshTrace, extractPythonCode, loadHumanEval, loadMbpp, mbppEntryPoint, opencodeTrace, tokenJaccard,
 } from './bench_common.mjs'
 
 const level = process.argv[2] ?? 'human-eval'
 const seed = Number(process.argv[3] ?? 1)
 const dir = fileURLToPath(new URL(`.runs/${level}-seed${seed}/`, import.meta.url))
-const files = readdirSync(dir).filter(name => name.endsWith('.json') && name !== 'summary.json').sort()
+const files = readdirSync(dir).filter(name => name.endsWith('.json') && name !== 'summary.json' && name !== 'metrics.json').sort()
 const dataset = level === 'mbpp' ? loadMbpp(files.length) : loadHumanEval(files.length)
 
 function runPython(source) {
@@ -39,7 +39,7 @@ function testSource(item, solution, finalText) {
     ? solution
     : extractPythonCode(finalText ?? '')
   if (code === undefined || code.trim() === '') return undefined
-  const name = item.entry_point
+  const name = level === 'mbpp' ? mbppEntryPoint(item) : item.entry_point
   const tests = level === 'mbpp'
     ? item.test_list.join('\n')
     : item.test
@@ -49,8 +49,8 @@ function testSource(item, solution, finalText) {
 const rows = []
 for (const file of files) {
   const row = JSON.parse(readFileSync(join(dir, file), 'utf8'))
-  const item = dataset.find(entry => String(entry.task_id ?? `task-${files.indexOf(file)}`) === String(row.id))
-    ?? dataset[files.indexOf(file)]
+  const item = dataset.find(entry => String(entry.task_id ?? `task-${files.indexOf(file)}`).replaceAll('/', '_') === String(row.id))
+    ?? dataset[Number(String(row.id).split('_').at(-1))]
   const dsh = row.dsh?.error ? undefined : dshTrace(row.dsh)
   const oc = row.opencode?.error ? undefined : opencodeTrace(row.opencode)
   const ds = dsh && testSource(item, row.dsh.solution, dsh.finalText)

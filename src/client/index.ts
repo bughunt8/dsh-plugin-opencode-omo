@@ -83,7 +83,11 @@ export function apply(ctx: Context): void {
   }
 
   ctx.effect(() => {
-    const disposeRole = ctx.slots.register({
+    // `slots.inject` waits for the declaring parent entry (ui-conversation /
+    // ui-settings) instead of assuming a global apply order. Out-of-tree
+    // bundles can compose in an order where the parent applies after this
+    // package; direct register() then throws "slot ... is not declared".
+    const disposeRole = ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
       name: 'conversation.input.left',
       id: 'opencode-omo-role',
       order: 10,
@@ -94,9 +98,9 @@ export function apply(ctx: Context): void {
         roleEndpoint: ROLE_ENDPOINT,
         selectModel: selection => selectModel(selection, sessionId),
       }),
-    }, RoleSelect)
+    }, RoleSelect))
 
-    const disposeSettings = ctx.slots.register({
+    const disposeSettings = ctx.slots.inject('settings.section', () => ctx.slots.register({
       name: 'settings.section',
       id: 'opencode-omo-roles',
       order: 40,
@@ -106,7 +110,7 @@ export function apply(ctx: Context): void {
         roleConfigEndpoint: ROLE_CONFIG_ENDPOINT,
         loadModels,
       }),
-    }, RoleSettingsSection)
+    }, RoleSettingsSection))
 
     return () => {
       disposeRole()

@@ -24,6 +24,8 @@ export { OmoRoleRegistry } from './omo-role-registry.ts'
 export type { OmoRoleRegistryFace } from './omo-role-registry.ts'
 export { OMO_DEFAULT_ROLE, OMO_ROLES, emptyRoleConfig, isOmoRole, normalizeOmoRole } from './core/omo-roles.ts'
 export type { OmoModelSelection, OmoRoleConfig, OmoRoleSettings } from './core/omo-roles.ts'
+export { detectDshCompat } from './core/dsh-capabilities.ts'
+export type { DshCompat } from './core/dsh-capabilities.ts'
 
 /** Cordis plugin name. */
 export const name = 'opencode-omo'
@@ -113,6 +115,7 @@ export function apply(ctx: Context): void {
           roles: catalog,
           configs,
           defaults: roles.defaults(),
+          compat: roles.compat,
           ...(sessionId === null ? {} : { currentRole: roles.roleFor(sessionId) }),
         })
       },

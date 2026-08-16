@@ -15,7 +15,7 @@
 //   model and advance the fallback chain, exactly like the previous subclass.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
+import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { renderRulesFor } from './rules.mjs'
 
 export const name = 'opencode-omo-loop'
@@ -646,8 +646,8 @@ function messageText(message) {
     .join('\n')
 }
 
-/** Infer the step about to be proposed from the durable log (the loop has not appended step/start yet). */
-function nextPosition(session) {
+/** Infer the current turn/step from the durable log (0 when no step has started yet). */
+function currentPosition(session) {
   let turn = 0
   let lastStep = 0
   for (let index = session.events.length - 1; index >= 0; index -= 1) {
@@ -664,18 +664,27 @@ function nextPosition(session) {
       break
     }
   }
-  return { turn, step: lastStep + 1 }
+  return { turn, step: lastStep }
 }
 
-/** Apply the omo + opencode whole system prompt for one assembly. */
-export function systemPromptFor(ctx, omoRoles, state, agent) {
+/** Infer the step about to be proposed (assembly runs before the loop appends step/start). */
+function nextPosition(session) {
+  const position = currentPosition(session)
+  return { turn: position.turn, step: position.step + 1 }
+}
+
+/** Model the current step resolved to, for execution-side gates that carry no turn/step. */
+function currentRouteModel(state, session, agent) {
+  const position = currentPosition(session)
+  const key = `${position.turn}:${position.step}`
+  return state.resolvedRoutes.get(key)?.model ?? agent.options?.model
+}
+
+/** Render the omo + opencode whole system prompt for one concrete route. */
+function renderOmoPrompt(ctx, omoRoles, state, agent, provider, model) {
   const session = agent.session
   const role = omoRoles?.roleFor?.(session.id) ?? 'sisyphus'
   const tools = schemasFor(ctx, agent)
-  const position = nextPosition(session)
-  const route = roleRoute(omoRoles, state, session, position.turn, position.step)
-  const provider = route?.provider ?? agent.options.provider ?? ''
-  const model = route?.model ?? agent.options.model ?? ''
   // The prompt family must follow the model this step actually routes to, not
   // the session's previous route (omo re-bakes the prompt for the live model).
   const roleSystem = rolePromptFor(role, model, tools)
@@ -684,7 +693,7 @@ export function systemPromptFor(ctx, omoRoles, state, agent) {
     ? dynamicSisyphusSections(tools, model)
     : ''
   const baseBody = family !== undefined
-    ? renderFamilyPrompt(family, tools)
+    ? sisyphusIdentityMarkdown() + '\n\n' + renderFamilyPrompt(family, tools)
     : roleSystem ?? personaText()
   const buildSwitch = buildSwitchFor(session)
   const plan = activePlanPrompt(session)
@@ -698,6 +707,23 @@ export function systemPromptFor(ctx, omoRoles, state, agent) {
   return omoEnvBlock(session, provider, model) + '\n' + body
 }
 
+/**
+ * Apply the omo + opencode whole system prompt for one assembly using the
+ * best model route visible to the section provider itself. During a live
+ * agent assembly the `system-prompt/assemble` listener replaces the rendered
+ * `{{opencode_omo_prompt}}` variable with the route the request actually
+ * resolves to (role primary, fallback entry, or the session's live model
+ * selection), so this path is only the pre-waterfall fallback.
+ */
+export function systemPromptFor(ctx, omoRoles, state, agent) {
+  const session = agent.session
+  const position = nextPosition(session)
+  const route = roleRoute(omoRoles, state, session, position.turn, position.step)
+  const provider = route?.provider ?? agent.options.provider ?? ''
+  const model = route?.model ?? agent.options.model ?? ''
+  return renderOmoPrompt(ctx, omoRoles, state, agent, provider, model)
+}
+
 /** Read the model-facing tool schemas as this agent sees them. */
 function schemasFor(ctx, agent) {
   try {
@@ -707,10 +733,11 @@ function schemasFor(ctx, agent) {
   }
 }
 
-/** State per live agent: fallback chain position and ultrawork turn. */
+/** State per live agent: fallback chain position, ultrawork turn, and the prompt/request-consistent route per turn:step. */
 function newState() {
   return {
     fallbackAttempts: new Map(),
+    resolvedRoutes: new Map(),
     lastRouteTurn: 0,
     ultraworkTurn: 0,
   }
@@ -762,9 +789,10 @@ function primaryModelFor(omoRoles, session) {
 function roleRoute(omoRoles, state, session, turn, step) {
   if (omoRoles === undefined) return undefined
   if (turn !== state.lastRouteTurn) {
-    // A fresh turn never inherits an older step's fallback position or an
-    // older turn's ultrawork keyword override.
+    // A fresh turn never inherits an older step's fallback position, an
+    // older step's resolved route, or an older turn's ultrawork override.
     state.fallbackAttempts.clear()
+    state.resolvedRoutes.clear()
     if (state.ultraworkTurn !== turn) state.ultraworkTurn = 0
     state.lastRouteTurn = turn
   }
@@ -776,6 +804,19 @@ function roleRoute(omoRoles, state, session, turn, step) {
     if (fallback !== undefined) return fallback
   }
   return primaryModelFor(omoRoles, session)
+}
+
+/**
+ * Resolve the route the request will actually use for one turn:step.
+ * A role primary/fallback/ultrawork target wins; otherwise the assembly's
+ * `provider`/`model` variables (the session's live model selection, set by
+ * dsh's model-selection listener) or the agent's declared options are used.
+ */
+function finalRouteFor(omoRoles, state, session, turn, step, variables, agent) {
+  const target = roleRoute(omoRoles, state, session, turn, step)
+  const provider = target?.provider ?? variables?.provider ?? agent.options?.provider ?? ''
+  const model = target?.model ?? variables?.model ?? agent.options?.model ?? ''
+  return { provider, model, target }
 }
 
 function advanceFallback(omoRoles, state, session, turn, step) {
@@ -843,6 +884,34 @@ function maxStepsPrefillFor(agent) {
 
 export { maxStepsPrefillFor }
 
+/** Fallback for harnesses without the assistantPrefill patch. */
+function maxStepsUserFallbackFor() {
+  return createUserMessage({
+    content: [{ type: 'text', text: MAX_STEPS_PROMPT }],
+    source: { kind: 'system' },
+  })
+}
+
+/**
+ * Resolve the maxSteps injection the CURRENT harness can honor. The host
+ * registry detects the dsh patch at startup and exposes `omoRoles.compat`;
+ * without the host row the shim conservatively assumes the patch is missing.
+ */
+function maxStepsDecisionFor(decision, agent, omoRoles) {
+  if (omoRoles?.compat?.assistantPrefill !== true) {
+    return {
+      ...decision,
+      messages: [...decision.messages, maxStepsUserFallbackFor()],
+    }
+  }
+  return {
+    ...decision,
+    assistantPrefill: maxStepsPrefillFor(agent),
+  }
+}
+
+export { maxStepsDecisionFor }
+
 export function apply(ctx) {
   const states = new Map()
   let omoRoles
@@ -864,32 +933,60 @@ export function apply(ctx) {
   }
 
   // The whole opencode+omo system prompt, replacing the static persona row.
-  // `complete: true` keeps dsh's layered harness sections suppressed while the
-  // text provider recomputes env/role/plan prompt per assembly.
+  // The section is a single interpolated variable: prompt section providers
+  // run BEFORE the `system-prompt/assemble` waterfall, so only the listener
+  // below sees the model-selection variables that carry the session's live
+  // route. It re-renders the full omo prompt for the actual request model and
+  // stores it in `{{opencode_omo_prompt}}`; `complete: true` then keeps the
+  // harness identity/runtime-context sections suppressed.
   ctx.effect(() => ctx.systemPrompt.section({
     name: PERSONA_SECTION,
     order: PERSONA_ORDER,
     complete: true,
     text: (context) => {
       if (context.agent === undefined) return personaText()
-      return systemPromptFor(ctx, omoRoles, stateFor(context.agent), context.agent)
+      return '{{opencode_omo_prompt}}'
     },
   }), 'opencode-omo-loop: complete persona section')
+  ctx.effect(() => ctx.systemPrompt.variable('opencode_omo_prompt', (context) => {
+    if (context.agent === undefined) return personaText()
+    return systemPromptFor(ctx, omoRoles, stateFor(context.agent), context.agent)
+  }), 'opencode-omo-loop: complete persona variable')
   ctx.systemPrompt.suppressRuntimeContext()
 
   // opencode's per-model tool gating rides the authoritative assembly
   // waterfall: the returned tool list is what the loop sends to the model.
+  // Prepend so this listener wraps dsh's model-selection listener (installed
+  // before the preset mounts): `next()` then returns the variables carrying
+  // the session's live provider/model, and the route stored here is the same
+  // one `agent/request` enforces on the actual LLM call.
   ctx.on('system-prompt/assemble', async (assembly, context, next) => {
     const transformed = await next()
-    const model = context.agent?.options?.model
-    return { ...transformed, tools: opencodeTools(transformed.tools, model) }
-  })
+    const agent = context.agent
+    if (agent === undefined) return transformed
+    const state = stateFor(agent)
+    const position = nextPosition(agent.session)
+    const route = finalRouteFor(
+      omoRoles, state, agent.session, position.turn, position.step,
+      transformed.variables, agent,
+    )
+    state.resolvedRoutes.set(`${position.turn}:${position.step}`, route)
+    transformed.variables.provider = route.provider
+    transformed.variables.model = route.model
+    transformed.variables.opencode_omo_prompt = renderOmoPrompt(
+      ctx, omoRoles, state, agent, route.provider, route.model,
+    )
+    return { ...transformed, tools: opencodeTools(transformed.tools, route.model) }
+  }, { prepend: true })
 
   // Execution-side mirror of the model-visible gate: a hallucinated call to a
   // tool this model family does not see must not dispatch through the original
   // registry (assembly filtering alone only changes the request schema).
   ctx.on('tools/pre-execute', async (exec, next) => {
-    const reason = gateToolCall(exec.name, exec.agent?.options?.model)
+    if (exec.agent === undefined) return next()
+    const reason = gateToolCall(exec.name, currentRouteModel(
+      stateFor(exec.agent), exec.agent.session, exec.agent,
+    ))
     if (reason !== undefined) return { kind: 'deny', reason }
     return next()
   })
@@ -926,23 +1023,27 @@ export function apply(ctx) {
     const decision = await next()
     if (decision.kind === 'reject') return decision
     if (step >= maxStepsFor(omoRoles, agent.session)) {
-      return {
-        kind: 'enter',
-        messages: decision.messages,
-        assistantPrefill: maxStepsPrefillFor(agent),
-      }
+      return maxStepsDecisionFor(decision, agent, omoRoles)
     }
     return decision
   })
 
-  // Role primary model + ultrawork override + omo sampling defaults.
+  // Role primary model + ultrawork override + omo sampling defaults. Prepend
+  // for the same reason as the assembly listener: dsh's model-selection
+  // listener would otherwise run last and silently override the role route
+  // (and split the request route from the prompt this preset rendered).
   ctx.on('agent/request', async ({ agent, turn, step }, next) => {
     const resolved = await next()
     const state = stateFor(agent)
     const role = currentRole(omoRoles, agent.session)
-    const target = roleRoute(omoRoles, state, agent.session, turn, step)
+    const planned = state.resolvedRoutes.get(`${turn}:${step}`)
+    const route = planned ?? finalRouteFor(
+      omoRoles, state, agent.session, turn, step,
+      { provider: resolved.provider, model: resolved.model }, agent,
+    )
+    const target = route.target
     const ultra = ultraworkRouteFor(omoRoles, state, agent.session, turn)
-    const model = target?.model ?? resolved.model
+    const model = route.model
     const sampling = defaultRoleSampling(role, model)
     if (target !== undefined) {
       // A reasoning-effort selected for another model must not leak into
@@ -951,8 +1052,8 @@ export function apply(ctx) {
       const effort = ultra?.reasoningEffort ?? target.reasoningEffort ?? sampling.reasoningEffort
       return {
         ...withoutInheritedEffort,
-        provider: target.provider,
-        model: target.model,
+        provider: route.provider,
+        model: route.model,
         ...(effort !== undefined ? { reasoningEffort: effort } : {}),
         ...(sampling.temperature !== undefined ? { temperature: sampling.temperature } : {}),
       }
@@ -963,7 +1064,7 @@ export function apply(ctx) {
       ...(effort !== undefined && resolved.reasoningEffort === undefined ? { reasoningEffort: effort } : {}),
       ...(sampling.temperature !== undefined ? { temperature: sampling.temperature } : {}),
     }
-  })
+  }, { prepend: true })
 
   ctx.on('agent/request-error', async ({ agent, turn, step, failure, signal }, next) => {
     if (signal?.aborted || !fallbackRetryable(failure)) return next()

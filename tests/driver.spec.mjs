@@ -9,7 +9,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fallbackRetryable, gateToolCall, maxStepsPrefillFor, opencodeUsesPatch, persistPlanFile, systemPromptFor } from '../presets/opencode-omo/driver.mjs'
+import { fallbackRetryable, gateToolCall, maxStepsDecisionFor, maxStepsPrefillFor, opencodeUsesPatch, persistPlanFile, systemPromptFor } from '../presets/opencode-omo/driver.mjs'
 import { renderRulesFor } from '../presets/opencode-omo/rules.mjs'
 
 function roleFace(role = 'sisyphus') {
@@ -169,6 +169,30 @@ test('unknown model families use the omo dynamic Sisyphus fallback prompt', () =
   } finally {
     rmSync(cwd, { recursive: true, force: true })
   }
+})
+
+test('maxSteps decision keeps the assistant prefill on a patched harness', () => {
+  const agent = mockAgent(process.cwd(), [], 'gpt-5.5')
+  const decision = maxStepsDecisionFor(
+    { kind: 'enter', messages: [], assembly: {} },
+    agent,
+    { compat: { assistantPrefill: true } },
+  )
+  assert.equal(decision.assistantPrefill?.role, 'assistant')
+  assert.equal(decision.messages.length, 0)
+})
+
+test('maxSteps decision degrades to a synthetic user message without the dsh patch', () => {
+  const agent = mockAgent(process.cwd(), [], 'gpt-5.5')
+  const decision = maxStepsDecisionFor(
+    { kind: 'enter', messages: [], assembly: {} },
+    agent,
+    { compat: { assistantPrefill: false } },
+  )
+  assert.equal(decision.assistantPrefill, undefined)
+  assert.equal(decision.messages.length, 1)
+  assert.equal(decision.messages[0].role, 'user')
+  assert.match(decision.messages[0].content[0].text, /CRITICAL - MAXIMUM STEPS REACHED/)
 })
 
 test('rules renderer returns empty text when no rule files exist', () => {

@@ -11,13 +11,13 @@
  * is injected once from JS — the plugin's CJS client bundle does not ship CSS
  * assets.
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import type { SessionId } from '@deepseek-ai/dsh-client-connection/client'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionListState } from '@deepseek-ai/dsh-client-runtime/client'
 import {
-  IconAgentPresetOutline16, IconChevronDownOutline14, Menu,
+  IconAgentPresetOutline16, IconChevronDownOutline14, IconWarningOutline16, Menu, Toast,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { OmoModelSelection } from './omo-wire.ts'
@@ -124,6 +124,9 @@ export function RoleSelect({
   const [error, setError] = useState<string | null>(null)
   const [roles, setRoles] = useState<readonly OmoRoleView[]>([])
   const [currentRole, setCurrentRole] = useState<string>('sisyphus')
+  // Transient dsh-compat warning; keyed seq restarts the same text on re-show.
+  const [notice, setNotice] = useState<{ seq: number; text: string } | null>(null)
+  const noticeSeq = useRef(0)
 
   const summary = useSessions?.(state => (sessionId === undefined ? undefined : state.byId[sessionId]))
   const eligible = summary?.agentPreset === OMO_PRESET
@@ -141,6 +144,17 @@ export function RoleSelect({
         setRoles(data.roles.filter(role => role.mode !== 'subagent'))
         setCurrentRole(data.currentRole ?? data.defaultRole)
         setError(null)
+        const warnings = data.compat?.warnings ?? []
+        if (warnings.length > 0) {
+          const key = `opencode-omo:compat:${warnings.join('|')}`
+          let seen: string | null = null
+          try { seen = sessionStorage.getItem(key) } catch { /* storage unavailable */ }
+          if (seen === null) {
+            try { sessionStorage.setItem(key, 'shown') } catch { /* storage unavailable */ }
+            noticeSeq.current += 1
+            setNotice({ seq: noticeSeq.current, text: warnings.join(' ') })
+          }
+        }
       })
       .catch((cause: unknown) => {
         if (stale) return
@@ -184,32 +198,42 @@ export function RoleSelect({
   const items: MenuEntry[] = roles.map(role => ({ id: role.id, label: role.displayName }))
 
   return (
-    <Menu
-      open={open && !locked}
-      items={items}
-      selectedId={currentRole}
-      onSelect={choose}
-      onClose={() => { setOpen(false) }}
-      side="top"
-      anchor={(
-        <button
-          type="button"
-          className="omo-role-select-trigger"
-          aria-label={`角色：${label}`}
-          title={error ?? current?.description ?? label}
-          disabled={locked || busy || roles.length === 0}
-          onClick={() => { setOpen(!open) }}
-        >
-          <span className="omo-role-select-trigger-icon" aria-hidden>
-            <IconAgentPresetOutline16 />
-          </span>
-          <span className="omo-role-select-trigger-label">{label}</span>
-          <span className={`omo-role-select-chevron${open ? ' omo-role-select-chevron-open' : ''}`} aria-hidden>
-            <IconChevronDownOutline14 />
-          </span>
-        </button>
+    <>
+      {notice !== null && (
+        <Toast
+          key={notice.seq}
+          text={notice.text}
+          icon={<IconWarningOutline16 />}
+          onDone={() => { setNotice(null) }}
+        />
       )}
-    />
+      <Menu
+        open={open && !locked}
+        items={items}
+        selectedId={currentRole}
+        onSelect={choose}
+        onClose={() => { setOpen(false) }}
+        side="top"
+        anchor={(
+          <button
+            type="button"
+            className="omo-role-select-trigger"
+            aria-label={`角色：${label}`}
+            title={error ?? current?.description ?? label}
+            disabled={locked || busy || roles.length === 0}
+            onClick={() => { setOpen(!open) }}
+          >
+            <span className="omo-role-select-trigger-icon" aria-hidden>
+              <IconAgentPresetOutline16 />
+            </span>
+            <span className="omo-role-select-trigger-label">{label}</span>
+            <span className={`omo-role-select-chevron${open ? ' omo-role-select-chevron-open' : ''}`} aria-hidden>
+              <IconChevronDownOutline14 />
+            </span>
+          </button>
+        )}
+      />
+    </>
   )
 }
 

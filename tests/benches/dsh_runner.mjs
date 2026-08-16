@@ -31,18 +31,26 @@ const api = async (method, payload, rpcId = `${method}-${Date.now()}-${Math.rand
   return res.json()
 }
 
-async function waitReady(timeoutMs = 60000) {
+async function waitReady(timeoutMs = 60000, stderrRef) {
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {
-    try {
-      const res = await api('host.describe', {})
-      if (res.result?.ok) return res.result.value
-    } catch {
-      // server not up yet
+    if (port === 0) {
+      // `--port 0` means "choose one"; the printed URL is the only source of
+      // truth, so discover it BEFORE the first api() call can use port 0.
+      const match = stderrRef.value.match(/http:\/\/[^:\n]+:(\d+)/)
+      if (match) port = Number(match[1])
+    }
+    if (port !== 0) {
+      try {
+        const res = await api('host.describe', {})
+        if (res.result?.ok) return res.result.value
+      } catch {
+        // server not up yet
+      }
     }
     await new Promise(resolve => setTimeout(resolve, 250))
   }
-  throw new Error('dsh web server did not become ready')
+  throw new Error(`dsh web server did not become ready (port discovery: ${stderrRef.value.trim() || 'none'})`)
 }
 
 export async function startDsh() {
@@ -52,15 +60,10 @@ export async function startDsh() {
     env: { ...process.env, DSH_HOME: DSH_HOME_BENCH },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
-  let stderr = ''
-  child.stderr.on('data', chunk => { stderr += String(chunk) })
-  const ready = await waitReady()
-  if (port === 0) {
-    // host.describe has no port; parse the printed URL from stderr
-    const match = stderr.match(/http:\/\/[^:\n]+:(\d+)/)
-    if (match) port = Number(match[1])
-    else throw new Error(`cannot discover port: ${stderr}`)
-  }
+  const stderrRef = { value: '' }
+  child.stdout.on('data', chunk => { stderrRef.value += String(chunk) })
+  child.stderr.on('data', chunk => { stderrRef.value += String(chunk) })
+  const ready = await waitReady(60000, stderrRef)
   return { child, port, describe: ready }
 }
 

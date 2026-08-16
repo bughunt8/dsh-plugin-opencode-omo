@@ -17,6 +17,14 @@ export interface OmoRoleView {
   readonly fallbackHint: string
 }
 
+/** dsh-side seam support detected by the host plugin at load. */
+export interface OmoCompat {
+  readonly assistantPrefill: boolean
+  readonly maxStepsMode: 'assistant-prefill' | 'synthetic-user-message' | 'disabled'
+  readonly warnings: readonly string[]
+  readonly detectionFailed: boolean
+}
+
 /** GET /plugins/.../roles response. */
 export interface OmoRolesResponse {
   readonly ok: boolean
@@ -26,6 +34,7 @@ export interface OmoRolesResponse {
   readonly configs: Record<string, OmoRoleConfig>
   /** Catalog-resolved omo default primary per role (null = none available). */
   readonly defaults: Record<string, OmoModelSelection | null>
+  readonly compat?: OmoCompat
   readonly currentRole?: string
 }
 

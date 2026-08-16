@@ -9,7 +9,7 @@ import { EventEmitter } from 'node:events'
 import { Context } from '@deepseek-ai/cordis'
 import { Service } from '@deepseek-ai/cordis'
 import { SettingsProvider } from '@deepseek-ai/dsh-settings'
-import { OMO_DEFAULT_ROLE, apply, inject, name, ROLE_ENDPOINT, ROLE_CONFIG_ENDPOINT } from '../lib/index.js'
+import { OMO_DEFAULT_ROLE, apply, detectDshCompat, inject, name, ROLE_ENDPOINT, ROLE_CONFIG_ENDPOINT } from '../lib/index.js'
 
 class MemorySettings extends SettingsProvider {
   doc = {}
@@ -186,4 +186,12 @@ test('rejects unknown roles through the registry', async () => {
   const { ctx } = await boot()
   await assert.rejects(ctx.omoRoles.setRole('session-a', 'unknown'))
   await assert.rejects(ctx.omoRoles.setRoleConfig('unknown', { fallbackModels: [] }))
+})
+
+test('dsh compat detection returns a stable supported/fallback snapshot', () => {
+  const compat = detectDshCompat()
+  assert.equal(typeof compat.assistantPrefill, 'boolean')
+  assert.ok(['assistant-prefill', 'synthetic-user-message', 'disabled'].includes(compat.maxStepsMode))
+  assert.equal(Array.isArray(compat.warnings), true)
+  assert.equal(typeof compat.detectionFailed, 'boolean')
 })
