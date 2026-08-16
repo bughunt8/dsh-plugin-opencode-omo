@@ -69,11 +69,19 @@ done
 
 Restart dsh and select **opencode-omo** from the mode picker.
 
+**Optional LSP server.** The preset preconfigures `typescript-language-server` for the `lsp` tool. `install.py` checks `PATH` and warns when it is missing; the preset then self-disables its `lsp-stdio` row so the mode still mounts (LSP queries fail gracefully instead of blocking the whole preset). Install it to enable LSP:
+
+```sh
+npm install -g typescript-language-server typescript
+```
+
+then restart dsh.
+
 ## Required dsh-side changes
 
 **This release depends on one dsh-side patch.** Apply it to deepseek-harness for full maxSteps fidelity; the patches are under [`patches/`](patches/README.md), split by feature:
 
-- `patches/0001-agent-pre-step-assistant-prefill.patch` — adds optional `assistantPrefill` to `PreStepDecision`, letting the loop record an assistant-role prefill before the model request. The plugin uses it to restore opencode's `MAX_STEPS_PROMPT` assistant-role semantics. **Runtime compatibility**: the host plugin scans the installed `@deepseek-ai/dsh-agent-loop` bundle for the compiled `assistantPrefill` marker. When the patch is absent, maxSteps automatically degrades to an equivalent synthetic user message (nothing is silently dropped) and the `/roles` response carries the warning to the browser; the web client shows it once per page load via the native `@deepseek-ai/dsh-client-ui-primitives` `Toast` (4 seconds, non-blocking).
+- `patches/0001-agent-pre-step-assistant-prefill.patch` — adds optional `assistantPrefill` to `PreStepDecision`; the loop appends it to the request after the derived history and logs it on `request/header` (request-only, never a session message). The plugin uses it to restore opencode's `MAX_STEPS_PROMPT` assistant-role semantics. **Runtime compatibility**: the host plugin scans the installed `@deepseek-ai/dsh-agent-loop` bundle for the compiled `assistantPrefill` marker. When the patch is absent, maxSteps automatically degrades to an equivalent synthetic user message (nothing is silently dropped) and the `/roles` response carries the warning to the browser; the web client shows it once per page load via the native `@deepseek-ai/dsh-client-ui-primitives` `Toast` (4 seconds, non-blocking).
 
 ```sh
 cd /path/to/deepseek-harness
