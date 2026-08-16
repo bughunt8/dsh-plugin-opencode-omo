@@ -20,4 +20,4 @@
     ```
   - 未打此补丁时：插件其余功能仍可运行。host 插件通过扫描已安装 `@deepseek-ai/dsh-agent-loop` 的编译产物检测该能力；检测不到时 `agent/pre-step` 自动降级为**等文本的合成 user 消息**注入 `MAX_STEPS_PROMPT`（不再静默丢失，仅角色语义非 assistant），并通过浏览器 `Toast` 提示用户应用本补丁。maxSteps 的完全保真仍依赖此补丁。
 
-补丁生成基线：`dev = master(47f9438) + 3811c90 + 1a9442d`。
+补丁生成基线：`dev@adf7d95`（补丁内容即随后的 commit `4a3587f feat: agent-pre-step-assistant-prefill`）。当前 dev 若已包含 `4a3587f`，无需再 apply。
