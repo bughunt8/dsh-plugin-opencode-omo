@@ -46,6 +46,18 @@ test('read carries opencode image guidance only when read_image is absent', () =
   assert.match(withImage.descriptions.read, /Read a file or directory from the local filesystem/)
 })
 
+test('bash surface advertises the escalation contract only when enabled', () => {
+  const plain = opencodeToolSurface()
+  assert.equal(plain.parameters.bash.sandbox_permissions, undefined)
+  assert.doesNotMatch(plain.descriptions.bash, /sandbox_permissions/)
+
+  const escalating = opencodeToolSurface({ bashEscalation: true })
+  assert.deepEqual(escalating.parameters.bash.sandbox_permissions.enum, ['workspace-write', 'danger-full-access'])
+  assert.ok(escalating.parameters.bash.justification)
+  assert.match(escalating.descriptions.bash, /sandbox_permissions/)
+  assert.match(escalating.descriptions.bash, /Executes a given bash command in a persistent shell session/)
+})
+
 test('parameters use opencode names for shimmed and name-safe tools', () => {
   const { parameters } = opencodeToolSurface()
   assert.ok(parameters.read.filePath.required)

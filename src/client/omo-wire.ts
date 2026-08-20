@@ -20,7 +20,7 @@ export interface OmoRoleView {
 /** dsh-side seam support detected by the host plugin at load. */
 export interface OmoCompat {
   readonly assistantPrefill: boolean
-  readonly maxStepsMode: 'assistant-prefill' | 'synthetic-user-message' | 'disabled'
+  readonly maxStepsMode: 'assistant-prefill' | 'system-prompt-section' | 'disabled'
   readonly warnings: readonly string[]
   readonly detectionFailed: boolean
 }

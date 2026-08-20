@@ -191,7 +191,7 @@ test('rejects unknown roles through the registry', async () => {
 test('dsh compat detection returns a stable supported/fallback snapshot', () => {
   const compat = detectDshCompat()
   assert.equal(typeof compat.assistantPrefill, 'boolean')
-  assert.ok(['assistant-prefill', 'synthetic-user-message', 'disabled'].includes(compat.maxStepsMode))
+  assert.ok(['assistant-prefill', 'system-prompt-section', 'disabled'].includes(compat.maxStepsMode))
   assert.equal(Array.isArray(compat.warnings), true)
   assert.equal(typeof compat.detectionFailed, 'boolean')
 })

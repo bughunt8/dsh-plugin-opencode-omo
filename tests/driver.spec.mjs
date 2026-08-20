@@ -33,7 +33,7 @@ function mockAgent(cwd, events = [], model = 'deepseek-v4') {
 }
 
 function mockState() {
-  return { fallbackAttempts: new Map(), lastRouteTurn: 0, ultraworkTurn: 0 }
+  return { fallbackAttempts: new Map(), resolvedRoutes: new Map(), lastRouteTurn: 0, ultraworkTurn: 0 }
 }
 
 test('complete system prompt folds omo rules in despite suppressed runtime context', () => {
@@ -48,6 +48,45 @@ test('complete system prompt folds omo rules in despite suppressed runtime conte
     assert.match(prompt, /Always verify\./)
     assert.match(prompt, /<env>/)
     assert.match(prompt, /Working directory:/)
+    assert.doesNotMatch(prompt, /Current DSH file policy/)
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
+test('policy block renders the sandbox mode, boundary, and escalation path', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'omo-policy-'))
+  try {
+    const ctx = {
+      tools: { schemas: () => [] },
+      get: (service) => service === 'sandboxPolicy'
+        ? { resolve: () => ({ mode: 'workspace-write', workspaceRoot: cwd }) }
+        : undefined,
+    }
+    const prompt = systemPromptFor(ctx, roleFace(), mockState(), mockAgent(cwd))
+    assert.match(prompt, /Current DSH file policy: workspace-write/)
+    assert.match(prompt, /sandbox_permissions/)
+    assert.match(prompt, /Never use sudo/)
+    assert.ok(prompt.indexOf('</env>') < prompt.indexOf('Current DSH file policy'))
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
+test('policy block states the finality of denials when approval is never', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'omo-policy-never-'))
+  try {
+    const ctx = {
+      tools: { schemas: () => [] },
+      get: (service) => {
+        if (service === 'sandboxPolicy') return { resolve: () => ({ mode: 'read-only', workspaceRoot: cwd }) }
+        if (service === 'approval') return { overrideOf: () => undefined, config: { policy: 'never' } }
+        return undefined
+      },
+    }
+    const prompt = systemPromptFor(ctx, roleFace(), mockState(), mockAgent(cwd))
+    assert.match(prompt, /Current DSH file policy: read-only/)
+    assert.match(prompt, /Approval prompts are disabled/)
   } finally {
     rmSync(cwd, { recursive: true, force: true })
   }
@@ -182,7 +221,9 @@ test('maxSteps decision keeps the assistant prefill on a patched harness', () =>
   assert.equal(decision.messages.length, 0)
 })
 
-test('maxSteps decision degrades to a synthetic user message without the dsh patch', () => {
+test('maxSteps decision passes through unchanged without the dsh patch', () => {
+  // Without the assistantPrefill seam the same text rides the system prompt
+  // (maxStepsSectionFor), so the pre-step decision is left untouched.
   const agent = mockAgent(process.cwd(), [], 'gpt-5.5')
   const decision = maxStepsDecisionFor(
     { kind: 'enter', messages: [], assembly: {} },
@@ -190,9 +231,35 @@ test('maxSteps decision degrades to a synthetic user message without the dsh pat
     { compat: { assistantPrefill: false } },
   )
   assert.equal(decision.assistantPrefill, undefined)
-  assert.equal(decision.messages.length, 1)
-  assert.equal(decision.messages[0].role, 'user')
-  assert.match(decision.messages[0].content[0].text, /CRITICAL - MAXIMUM STEPS REACHED/)
+  assert.equal(decision.messages.length, 0)
+})
+
+test('maxSteps section appears in the system prompt at the ceiling on a patchless harness', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'omo-maxsteps-'))
+  try {
+    // step counting: nextPosition = last step/start + 1; three starts propose step 4.
+    const events = [
+      { type: 'turn/start', data: { turn: 1 } },
+      { type: 'step/start', data: { turn: 1, step: 1 } },
+      { type: 'step/start', data: { turn: 1, step: 2 } },
+      { type: 'step/start', data: { turn: 1, step: 3 } },
+    ]
+    const roles = { ...roleFace(), compat: { assistantPrefill: false }, configFor: () => ({ maxSteps: 4, fallbackModels: [] }) }
+    const ctx = { tools: { schemas: () => [] } }
+    const prompt = systemPromptFor(ctx, roles, mockState(), mockAgent(cwd, events))
+    assert.match(prompt, /CRITICAL - MAXIMUM STEPS REACHED/)
+
+    // Below the ceiling the section is absent.
+    const below = systemPromptFor(ctx, roles, mockState(), mockAgent(cwd, events.slice(0, 3)))
+    assert.doesNotMatch(below, /CRITICAL - MAXIMUM STEPS REACHED/)
+
+    // A patched harness never renders the section (the prefill carries it).
+    const patched = { ...roleFace(), compat: { assistantPrefill: true }, configFor: () => ({ maxSteps: 4, fallbackModels: [] }) }
+    const patchedPrompt = systemPromptFor(ctx, patched, mockState(), mockAgent(cwd, events))
+    assert.doesNotMatch(patchedPrompt, /CRITICAL - MAXIMUM STEPS REACHED/)
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
 })
 
 test('rules renderer returns empty text when no rule files exist', () => {

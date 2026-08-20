@@ -18,15 +18,15 @@ export interface DshCompat {
   /** dsh records `PreStepDecision.assistantPrefill` (patched harness). */
   readonly assistantPrefill: boolean
   /** Max-steps strategy chosen for this harness. */
-  readonly maxStepsMode: 'assistant-prefill' | 'synthetic-user-message' | 'disabled'
+  readonly maxStepsMode: 'assistant-prefill' | 'system-prompt-section' | 'disabled'
   /** User-facing degradation notices (empty when fully supported). */
   readonly warnings: readonly string[]
   /** True when the detection itself failed (e.g. agent-loop package unresolvable). */
   readonly detectionFailed: boolean
 }
 
-export const ASSISTANT_PREFILL_WARNING = '当前 dsh 构建缺少 agent/pre-step assistantPrefill 补丁：maxSteps 已降级为合成用户消息（语义接近但非 assistant 角色）。请应用 patches/0001-agent-pre-step-assistant-prefill.patch 并重建 harness。'
-export const DETECTION_FAILED_WARNING = '无法确认 dsh 是否支持 assistantPrefill（@deepseek-ai/dsh-agent-loop 解析失败）：maxSteps 使用安全的合成用户消息降级。'
+export const ASSISTANT_PREFILL_WARNING = '当前 dsh 构建缺少 agent/pre-step assistantPrefill 补丁：maxSteps 触顶提示已降级为系统提示词注入（文本相同但位于 system prompt，非 assistant 角色续写）。请应用 patches/0001-agent-pre-step-assistant-prefill.patch 并重建 harness。'
+export const DETECTION_FAILED_WARNING = '无法确认 dsh 是否支持 assistantPrefill（@deepseek-ai/dsh-agent-loop 解析失败）：maxSteps 触顶提示使用系统提示词注入降级。'
 
 let cached: DshCompat | undefined
 
@@ -51,7 +51,7 @@ function computeDshCompat(): DshCompat {
   if (!resolved.ok) {
     return {
       assistantPrefill: false,
-      maxStepsMode: 'synthetic-user-message',
+      maxStepsMode: 'system-prompt-section',
       warnings: [DETECTION_FAILED_WARNING],
       detectionFailed: true,
     }
@@ -59,7 +59,7 @@ function computeDshCompat(): DshCompat {
   const supported = resolved.text.includes('assistantPrefill')
   return {
     assistantPrefill: supported,
-    maxStepsMode: supported ? 'assistant-prefill' : 'synthetic-user-message',
+    maxStepsMode: supported ? 'assistant-prefill' : 'system-prompt-section',
     warnings: supported ? [] : [ASSISTANT_PREFILL_WARNING],
     detectionFailed: false,
   }

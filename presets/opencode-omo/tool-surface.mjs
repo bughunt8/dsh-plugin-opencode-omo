@@ -7,6 +7,7 @@
 import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { defineTool, parameterSchemaSpecToJsonSchema } from '@deepseek-ai/dsh-tools'
+import { ESCALATION_GUIDANCE, ESCALATION_PARAMETERS, escalationAvailableFor } from './escalating-bash.mjs'
 
 export const name = 'opencode-omo-tool-surface'
 export const inject = ['tools']
@@ -163,6 +164,9 @@ const SHIM_CONVERTERS = {
 export function opencodeToolSurface(options = {}) {
   const readImagePresent = options.readImagePresent ?? false
   const year = options.year ?? new Date().getFullYear()
+  // The escalating-bash shim owns the execution side; the surface must
+  // advertise the same sandbox_permissions contract or the model never sees it.
+  const bashEscalation = options.bashEscalation ?? false
   return {
     descriptions: {
       read: readDescriptionFor(readImagePresent),
@@ -174,9 +178,11 @@ export function opencodeToolSurface(options = {}) {
       skill: SKILL_TXT,
       web_fetch: WEBFETCH_TXT,
       web_search: WEBSEARCH_TXT.replaceAll('{{year}}', String(year)),
-      bash: bashDescription(options),
+      bash: bashDescription(options) + (bashEscalation ? ESCALATION_GUIDANCE : ''),
     },
-    parameters: OPENCODE_PARAMS,
+    parameters: bashEscalation
+      ? { ...OPENCODE_PARAMS, bash: { ...OPENCODE_PARAMS.bash, ...ESCALATION_PARAMETERS } }
+      : OPENCODE_PARAMS,
     converters: SHIM_CONVERTERS,
   }
 }
@@ -259,6 +265,10 @@ function ensureShimsFor(ctx, agent) {
 }
 
 export function apply(ctx) {
+  // Composition-level fact: escalation needs a confining shell executor and
+  // the sandbox policy service (see escalating-bash.mjs).
+  const bashEscalation = escalationAvailableFor(ctx.get('shell'), ctx.get('sandboxPolicy'))
+
   // Per-agent execution shims: registered in the agent's OWN tool layer so they
   // shadow the preset's inherited read/edit/write definitions without touching
   // the standing layer (which tool-fs owns and would reject a same-name insert).
@@ -270,6 +280,6 @@ export function apply(ctx) {
   ctx.on('system-prompt/assemble', async (assembly, context, next) => {
     const transformed = await next()
     if (context.agent !== undefined) ensureShimsFor(ctx, context.agent)
-    return { ...transformed, tools: applyOpencodeSurface(transformed.tools) }
+    return { ...transformed, tools: applyOpencodeSurface(transformed.tools, { bashEscalation }) }
   })
 }

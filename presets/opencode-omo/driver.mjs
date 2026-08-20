@@ -10,12 +10,13 @@
 //   (apply_patch vs edit/write) to the request's tool schemas.
 // - `agent/inbox/claimed` detects omo ultrawork keywords before assembly.
 // - `agent/pre-step` injects opencode's MAX_STEPS_PROMPT when a role's
-//   maxSteps ceiling is reached.
+//   maxSteps ceiling is reached (assistant-role prefill on a patched harness;
+//   a system-prompt section otherwise).
 // - `agent/request` / `agent/request-error` route through the role's primary
 //   model and advance the fallback chain, exactly like the previous subclass.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
 import { renderRulesFor } from './rules.mjs'
 
 export const name = 'opencode-omo-loop'
@@ -638,6 +639,44 @@ function omoEnvBlock(session, provider, model) {
   ].join('\n')
 }
 
+// The harness communicates the file-sandbox mode and approval policy through
+// systemPrompt.context contributions (dsh-sandbox-policy's `sandbox:policy`
+// and dsh-user-approval's `approval:policy`), which this preset's
+// suppressRuntimeContext() drops. Re-render the same facts here so the model
+// knows the boundary it runs under and the sanctioned escalation path. The
+// policy sentences mirror dsh-sandbox-policy's renderPolicyContext wording —
+// reconcile these strings when dsh changes theirs. Both services are read
+// through public APIs (sandboxPolicy.resolve / approval.overrideOf + config).
+function omoPolicyBlock(ctx, session) {
+  if (typeof ctx.get !== 'function') return undefined
+  const sandboxPolicy = ctx.get('sandboxPolicy')
+  if (sandboxPolicy === undefined || sandboxPolicy === null) return undefined
+  let policy
+  try {
+    policy = sandboxPolicy.resolve({ session })
+  } catch {
+    return undefined
+  }
+  const approval = ctx.get('approval')
+  const approvalPolicy = approval === undefined || approval === null
+    ? 'ask'
+    : (approval.overrideOf?.(session) ?? approval.config?.policy ?? 'ask')
+  const lines = []
+  if (policy.mode === 'workspace-write') {
+    lines.push('Current DSH file policy: workspace-write. Operations enforced by the DSH file sandbox may modify files under the session workspace: '
+      + JSON.stringify(policy.workspaceRoot)
+      + '. Reads are unrestricted, and some platform temporary areas may also be writable. The persistent bash shell runs inside this sandbox: a file write outside the workspace fails with a "Read-only file system" error — a policy denial, not a command bug. Follow the bash tool\'s `sandbox_permissions` escalation guidance when that happens, and prefer the read/write/edit file tools for out-of-workspace file access (they raise the same user-approval prompt automatically). Never use sudo: privilege escalation is blocked in this environment.')
+  } else if (policy.mode === 'read-only') {
+    lines.push('Current DSH file policy: read-only. Operations enforced by the DSH file sandbox cannot modify files in the standing mode. Do not refuse a required modification from this policy alone: try an available tool normally and follow any denial and escalation guidance it returns.')
+  } else if (policy.mode === 'danger-full-access') {
+    lines.push('Current DSH file policy: danger-full-access. The DSH file sandbox does not restrict file modifications by available operations.')
+  }
+  if (approvalPolicy === 'never') {
+    lines.push('Approval prompts are disabled in this session: a sandbox denial is final — do not set `sandbox_permissions`.')
+  }
+  return lines.length === 0 ? undefined : lines.join('\n')
+}
+
 /** Flatten one inbox message's text for ultrawork detection. */
 function messageText(message) {
   return (message.content ?? [])
@@ -697,14 +736,22 @@ function renderOmoPrompt(ctx, omoRoles, state, agent, provider, model) {
     : roleSystem ?? personaText()
   const buildSwitch = buildSwitchFor(session)
   const plan = activePlanPrompt(session)
+  const policyBlock = omoPolicyBlock(ctx, session)
+  // Patchless maxSteps degradation rides the system prompt (see
+  // maxStepsSectionFor); on a patched harness the pre-step listener injects
+  // the same text as an assistant continuation instead.
+  const maxStepsSection = maxStepsSectionFor(omoRoles, session)
   const body = [
+    ...(maxStepsSection === undefined ? [] : [maxStepsSection]),
     ...(buildSwitch === undefined ? [] : [buildSwitch]),
     ...(plan === undefined ? [] : [plan]),
     baseBody,
     ...(dynamic === '' ? [] : [dynamic]),
     renderRulesFor(session.header.cwd),
   ].filter(part => part !== '').join('\n\n')
-  return omoEnvBlock(session, provider, model) + '\n' + body
+  return omoEnvBlock(session, provider, model)
+    + (policyBlock === undefined ? '' : '\n' + policyBlock)
+    + '\n' + body
 }
 
 /**
@@ -884,26 +931,33 @@ function maxStepsPrefillFor(agent) {
 
 export { maxStepsPrefillFor }
 
-/** Fallback for harnesses without the assistantPrefill patch. */
-function maxStepsUserFallbackFor() {
-  return createUserMessage({
-    content: [{ type: 'text', text: MAX_STEPS_PROMPT }],
-    source: { kind: 'system' },
-  })
+/**
+ * Patchless maxSteps degradation: when the harness lacks the assistantPrefill
+ * seam, render opencode's MAX_STEPS_PROMPT as a system-prompt section for the
+ * step that reaches the ceiling — the same text on the same trigger as the
+ * pre-step injection, differing only in position (system prefix instead of a
+ * trailing assistant continuation). The omo prompt re-renders every step, so
+ * no dsh seam is needed for this.
+ */
+function maxStepsSectionFor(omoRoles, session) {
+  if (omoRoles?.compat?.assistantPrefill === true) return undefined
+  const maxSteps = maxStepsFor(omoRoles, session)
+  if (!Number.isFinite(maxSteps)) return undefined
+  return nextPosition(session).step >= maxSteps ? MAX_STEPS_PROMPT : undefined
 }
+
+export { maxStepsSectionFor }
 
 /**
  * Resolve the maxSteps injection the CURRENT harness can honor. The host
  * registry detects the dsh patch at startup and exposes `omoRoles.compat`;
  * without the host row the shim conservatively assumes the patch is missing.
+ * A patched harness records the text as an assistant-role continuation;
+ * without the seam the system prompt carries it (see maxStepsSectionFor), so
+ * the pre-step decision passes through unchanged.
  */
 function maxStepsDecisionFor(decision, agent, omoRoles) {
-  if (omoRoles?.compat?.assistantPrefill !== true) {
-    return {
-      ...decision,
-      messages: [...decision.messages, maxStepsUserFallbackFor()],
-    }
-  }
+  if (omoRoles?.compat?.assistantPrefill !== true) return decision
   return {
     ...decision,
     assistantPrefill: maxStepsPrefillFor(agent),
@@ -1015,10 +1069,11 @@ export function apply(ctx) {
     }
   })
 
-  // maxSteps + MAX_STEPS_PROMPT. Requires the general-purpose dsh seam
-  // `PreStepDecision.assistantPrefill` (see DSH_CHANGE_PROPOSALS.md): the
-  // verbatim opencode text enters as the assistant-role continuation it is,
-  // instead of a synthetic user message.
+  // maxSteps + MAX_STEPS_PROMPT. On a patched harness the general-purpose dsh
+  // seam `PreStepDecision.assistantPrefill` (see DSH_CHANGE_PROPOSALS.md)
+  // carries the verbatim opencode text as the assistant-role continuation it
+  // is; without the seam the same text rides the system prompt via
+  // maxStepsSectionFor, so this listener leaves the decision unchanged.
   ctx.on('agent/pre-step', async ({ agent, step }, next) => {
     const decision = await next()
     if (decision.kind === 'reject') return decision

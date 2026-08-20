@@ -35,6 +35,13 @@
 - id: opencode-omo-permission-rules
   name: ./permission-rules.mjs
 
+# bash sandbox-escalation shim: the stock persistent bash carries none of
+# tool-bash's sandbox_permissions/approval contract, so under workspace-write
+# an out-of-workspace write dead-ends at EROFS. This per-agent shim adds the
+# contract back using only public dsh services (see the module header).
+- id: opencode-omo-escalating-bash
+  name: ./escalating-bash.mjs
+
 # ── lsp ─────────────────────────────────────────────────────────────────────
 # omo's LSP surface (goto-definition, references, symbols, hover). Scoped to this
 # preset via an isolate realm; a TypeScript/JS server is preconfigured.
