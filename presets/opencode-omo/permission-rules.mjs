@@ -12,11 +12,17 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 export const name = 'opencode-omo-permission-rules'
 
-/** Path-bearing parameters checked by the external-directory rule. */
+/**
+ * Path-bearing parameters checked by the external-directory rule. The
+ * tool-surface shims re-register read/write/edit with opencode's camelCase
+ * `filePath` schema, so pre-execute sees camelCase arguments for those tools;
+ * the snake_case entries keep coverage where the native dsh definitions are
+ * mounted directly (read_image, hashline_edit, lsp stay snake_case).
+ */
 const PATH_ARGUMENTS = {
-  read: ['file_path'],
-  write: ['file_path'],
-  edit: ['file_path'],
+  read: ['filePath', 'file_path'],
+  write: ['filePath', 'file_path'],
+  edit: ['filePath', 'file_path'],
   read_image: ['file_path'],
   hashline_edit: ['file_path'],
   glob: ['path'],

@@ -12,6 +12,14 @@ test('pathArgument reads the first path-bearing parameter', () => {
   assert.equal(pathArgument(exec('bash', { command: 'ls' })), undefined)
 })
 
+test('pathArgument covers the camelCase shim surface for read/write/edit', () => {
+  // The tool-surface shims re-register read/write/edit with opencode's
+  // camelCase `filePath` schema; pre-execute sees those arguments verbatim.
+  assert.equal(pathArgument(exec('read', { filePath: '/repo/a.txt' })), '/repo/a.txt')
+  assert.equal(pathArgument(exec('write', { filePath: '/repo/a.txt', content: 'x' })), '/repo/a.txt')
+  assert.equal(pathArgument(exec('edit', { filePath: '/repo/a.txt', oldString: 'a', newString: 'b' })), '/repo/a.txt')
+})
+
 test('outsideWorkspace detects absolute and parent-relative escapes', () => {
   assert.equal(outsideWorkspace('/repo/a.txt', '/repo'), false)
   assert.equal(outsideWorkspace('../outside.txt', '/repo'), true)
@@ -21,7 +29,11 @@ test('outsideWorkspace detects absolute and parent-relative escapes', () => {
 
 test('externalDirectoryReason asks only for path-bearing outside accesses', () => {
   assert.match(externalDirectoryReason(exec('read', { file_path: '../secret' })), /requires approval/)
+  assert.match(externalDirectoryReason(exec('read', { filePath: '../secret' })), /requires approval/)
+  assert.match(externalDirectoryReason(exec('write', { filePath: '/etc/x', content: 'y' })), /requires approval/)
+  assert.match(externalDirectoryReason(exec('edit', { filePath: '/etc/x', oldString: 'a', newString: 'b' })), /requires approval/)
   assert.equal(externalDirectoryReason(exec('read', { file_path: 'src/a.txt' })), undefined)
+  assert.equal(externalDirectoryReason(exec('read', { filePath: 'src/a.txt' })), undefined)
   assert.equal(externalDirectoryReason(exec('bash', { command: 'cat /etc/passwd' })), undefined)
 })
 
