@@ -6,6 +6,8 @@
 // schema text for every matched tool.
 import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { basename, extname } from 'node:path'
+import { canonicalPath } from '@deepseek-ai/dsh-sandbox'
 import { defineTool, parameterSchemaSpecToJsonSchema } from '@deepseek-ai/dsh-tools'
 import { ESCALATION_GUIDANCE, ESCALATION_PARAMETERS, escalationAvailableFor } from './escalating-bash.mjs'
 
@@ -52,6 +54,208 @@ const SKILL_TXT = referenceText('skill.txt', SKILL_TXT_FALLBACK)
 const WEBFETCH_TXT = referenceText('webfetch.txt', WEBFETCH_TXT_FALLBACK)
 const WEBSEARCH_TXT = referenceText('websearch.txt', WEBSEARCH_TXT_FALLBACK)
 const SHELL_TXT = referenceText('shell/shell.txt', SHELL_TXT_FALLBACK)
+
+// ── read_image repair shim ─────────────────────────────────────────────────
+// dsh-tool-fs registers `read_image` through `ctx.inject(['attachments'], cb)`.
+// Inside this preset's `filesystem` isolate realm (`isolate: { fs: true }`),
+// cordis' property walk (`ctx.fs`) from that injected child context throws
+// "cannot get property fs without inject", while `ctx.get('fs')` resolves fine.
+// Per-agent we therefore shadow the broken global read_image with the same
+// schema/render/presenters, but execute through `ctx.get('fs')`.
+
+const READ_IMAGE_DESCRIPTION = 'Read a PNG/JPEG/WebP/GIF file and return the image itself. Requires the current model to accept image input.'
+
+const READ_IMAGE_PARAMETERS = {
+  file_path: { type: 'string', required: true, description: 'Path to the image file, resolved by the filesystem backend.' },
+}
+
+const READ_IMAGE_OUTPUT = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    path: { type: 'string', required: true },
+    image: {
+      type: 'object',
+      additionalProperties: false,
+      required: true,
+      properties: {
+        attachmentId: { type: 'string', required: true },
+        mediaType: { type: 'string', enum: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'], required: true },
+        bytes: { type: 'integer', required: true },
+        width: { type: 'integer', required: true },
+        height: { type: 'integer', required: true },
+        name: { type: 'string' },
+      },
+    },
+  },
+}
+
+const IMAGE_EXTENSIONS = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+}
+
+function imageMediaTypeForPath(filePath) {
+  return IMAGE_EXTENSIONS[extname(filePath).toLowerCase()]
+}
+
+const PARENT_PATH_SEGMENT = /(?:^|[\\/])\.\.(?:[\\/]|$)/
+
+function imageSessionResolveOptions(exec, requestedPath) {
+  const cwd = exec.agent?.session?.header?.cwd
+  if (cwd === undefined || (!PARENT_PATH_SEGMENT.test(cwd) && !PARENT_PATH_SEGMENT.test(requestedPath))) {
+    return { ...(cwd !== undefined ? { cwd } : {}), signal: exec.signal }
+  }
+  return { cwd: canonicalPath(cwd), signal: exec.signal }
+}
+
+async function resolveImageReadTarget(ctx, exec, requestedPath) {
+  const fs = ctx.get('fs')
+  const target = await fs.resolve(requestedPath, imageSessionResolveOptions(exec, requestedPath))
+  const info = await fs.stat(target, exec.signal)
+  if (info === undefined) {
+    ctx.emit('fs/observed', target, { kind: 'absent' }, exec)
+    throw new Error(`cannot read "${target.displayPath}": not found`)
+  }
+  if (info.type !== 'file') throw new Error(`cannot read "${target.displayPath}": not a regular file`)
+  return { target, info }
+}
+
+async function assertImageCapableRoute(ctx, exec, requestedPath) {
+  const routed = exec.agent?.session?.requestHeader()?.config
+  const provider = routed?.provider ?? exec.agent?.options.provider
+  const model = routed?.model ?? exec.agent?.options.model
+  const llm = ctx.get('llm')
+  if (provider === undefined || model === undefined || llm === undefined) {
+    throw new Error(`cannot read "${requestedPath}" as an image: the current model route could not be resolved`)
+  }
+  const active = await llm.resolveModelInfo(provider, model, exec.signal)
+  if (active.inputModalities === undefined || !active.inputModalities.includes('image')) {
+    throw new Error(`cannot read "${requestedPath}" as an image: model "${model}" does not declare image input; switch to an image-capable model to read images`)
+  }
+}
+
+function formatImageReadOutput(displayPath, image) {
+  return `<path>${displayPath}</path>
+<type>image</type>
+<content>
+${image.mediaType} image, ${image.width}x${image.height} px, ${image.bytes} bytes
+</content>`
+}
+
+function imageRefFromValue(image) {
+  return {
+    attachmentId: image.attachmentId,
+    mediaType: image.mediaType,
+    bytes: image.bytes,
+    width: image.width,
+    height: image.height,
+    ...(image.name === undefined ? {} : { name: image.name }),
+  }
+}
+
+function imageReadContent(value) {
+  return [
+    { type: 'text', text: formatImageReadOutput(value.path, value.image) },
+    { type: 'image', attachment: imageRefFromValue(value.image) },
+  ]
+}
+
+async function executeReadImage(ctx, args, exec) {
+  if (args.file_path.trim().length === 0) throw new Error('file_path must be a non-empty string')
+
+  // Every gate runs before any filesystem I/O so a refusal never leaks
+  // partial reads or attachment writes.
+  const mediaType = imageMediaTypeForPath(args.file_path)
+  if (mediaType === undefined) {
+    throw new Error(`cannot read "${args.file_path}": read_image only accepts PNG/JPEG/WebP/GIF paths`)
+  }
+  const attachments = ctx.get('attachments')
+  if (attachments === undefined) {
+    throw new Error(`cannot read "${args.file_path}" as an image: no attachment service is mounted`)
+  }
+  if (!attachments.imageLimits.mediaTypes.includes(mediaType)) {
+    throw new Error(`cannot read "${args.file_path}": ${mediaType} images are not accepted by this deployment`)
+  }
+  await assertImageCapableRoute(ctx, exec, args.file_path)
+
+  const { target, info } = await resolveImageReadTarget(ctx, exec, args.file_path)
+
+  // The tool result is one message carrying one image, so the per-message
+  // aggregate bound applies beside the per-image bound.
+  const byteCap = Math.min(attachments.imageLimits.maxImageBytes, attachments.imageLimits.maxMessageImageBytes)
+  const fs = ctx.get('fs')
+  const data = await fs.readBytes(target, exec.signal, byteCap)
+
+  let ref
+  try {
+    ref = await attachments.saveImage({ data, mediaType, name: basename(target.displayPath) })
+  } catch (error) {
+    const code = error?.code
+    if (typeof code !== 'string') throw error
+    if (code === 'IMAGE_DIMENSION_TOO_LARGE') {
+      throw new Error(
+        `cannot read "${target.displayPath}": at least one image side exceeds the ${attachments.imageLimits.maxImageDimension}px limit; downscale the image and read the smaller copy`,
+        { cause: error },
+      )
+    }
+    if (code === 'IMAGE_TOO_MANY_PIXELS') {
+      throw new Error(
+        `cannot read "${target.displayPath}": the image exceeds the ${attachments.imageLimits.maxImagePixels}-pixel decoded-size limit; downscale the image and read the smaller copy`,
+        { cause: error },
+      )
+    }
+    if (code !== 'IMAGE_TYPE_MISMATCH') throw error
+    const extension = extname(target.displayPath).toLowerCase()
+    throw new Error(
+      `cannot read "${target.displayPath}": the ${extension} extension declares ${mediaType}, but the bytes use a different image format; rename the file to match its actual format if it is PNG/JPEG/WebP/GIF, or convert it to one of those formats`,
+      { cause: error },
+    )
+  }
+  ctx.emit('fs/observed', target, { kind: 'present', version: info.version }, exec)
+  return {
+    path: target.displayPath,
+    image: {
+      attachmentId: ref.attachmentId,
+      mediaType: ref.mediaType,
+      bytes: ref.bytes,
+      width: ref.width,
+      height: ref.height,
+      ...(ref.name === undefined ? {} : { name: ref.name }),
+    },
+  }
+}
+
+export function createReadImageShim(original, ctx) {
+  if (original === undefined) {
+    throw new Error(`opencode-omo-tool-surface: cannot shim "read_image" because the original dsh definition is unavailable`)
+  }
+  return defineTool({
+    name: 'read_image',
+    description: original.description ?? READ_IMAGE_DESCRIPTION,
+    parameters: READ_IMAGE_PARAMETERS,
+    output: {
+      schema: READ_IMAGE_OUTPUT,
+      render: (args, value) => original.output.render(args, value),
+      ...(typeof original.output.presentationMeta === 'function'
+        ? { presentationMeta: (args, value) => original.output.presentationMeta(args, value) }
+        : {}),
+    },
+    ...(typeof original.isConcurrencySafe === 'function'
+      ? { isConcurrencySafe: args => original.isConcurrencySafe(args) }
+      : {}),
+    ...(typeof original.presentCall === 'function'
+      ? { presentCall: args => original.presentCall(args) }
+      : {}),
+    ...(typeof original.presentResult === 'function'
+      ? { presentResult: (args, result) => original.presentResult(args, result) }
+      : {}),
+    execute: (args, exec) => executeReadImage(ctx, args, exec),
+  })
+}
 
 function readDescriptionFor(readImagePresent) {
   if (readImagePresent) {
@@ -247,7 +451,12 @@ function ensureShimsFor(ctx, agent) {
   if (shimmedAgents.has(agent)) return
   shimmedAgents.add(agent)
 
-  const readImagePresent = ctx.tools.get('read_image', agent) !== undefined
+  const readImageOriginal = ctx.tools.get('read_image', agent)
+  const readImagePresent = readImageOriginal !== undefined
+  if (readImageOriginal !== undefined) {
+    agent.ctx.tools.register(createReadImageShim(readImageOriginal, ctx))
+  }
+
   const readOriginal = ctx.tools.get('read', agent)
   if (readOriginal !== undefined) {
     agent.ctx.tools.register(createShim('read', readOriginal, readDescriptionFor(readImagePresent), OPENCODE_PARAMS.read))

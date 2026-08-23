@@ -10,6 +10,7 @@ import assert from 'node:assert/strict'
 import {
   applyOpencodeSurface,
   bashDescription,
+  createReadImageShim,
   name,
   opencodeToolSurface,
   toDshEditArgs,
@@ -160,4 +161,112 @@ test('bash description renders every shell.txt placeholder', () => {
   assert.doesNotMatch(description, /\$\{/)
   assert.match(description, /OS: linux, Shell: bash/)
   assert.match(description, /Use `\/tmp` for temporary work outside the workspace/)
+})
+
+test('read_image shim executes through ctx.get(fs), not ctx.fs', async () => {
+  const emitted = []
+  const target = { displayPath: '/tmp/a.png' }
+  const fs = {
+    async resolve(requestedPath) {
+      assert.equal(requestedPath, '/tmp/a.png')
+      return target
+    },
+    async stat(received) {
+      assert.equal(received, target)
+      return { type: 'file', version: 1 }
+    },
+    async readBytes(received, _signal, cap) {
+      assert.equal(received, target)
+      assert.equal(cap, 400)
+      return new Uint8Array([1, 2, 3])
+    },
+  }
+  const attachments = {
+    imageLimits: {
+      mediaTypes: ['image/png'],
+      maxImageBytes: 500,
+      maxMessageImageBytes: 400,
+      maxImageDimension: 2000,
+      maxImagePixels: 1000000,
+    },
+    async saveImage({ data, mediaType, name }) {
+      assert.deepEqual(data, new Uint8Array([1, 2, 3]))
+      assert.equal(mediaType, 'image/png')
+      assert.equal(name, 'a.png')
+      return { attachmentId: 'att-1', mediaType, bytes: data.byteLength, width: 1, height: 1, name }
+    },
+  }
+  const llm = {
+    async resolveModelInfo(provider, model) {
+      assert.equal(provider, 'openai')
+      assert.equal(model, 'gpt-image')
+      return { inputModalities: ['text', 'image'] }
+    },
+  }
+  const ctx = {
+    get(name) {
+      return { fs, attachments, llm }[name]
+    },
+    emit(name, ...args) {
+      emitted.push([name, ...args])
+    },
+  }
+  const original = {
+    name: 'read_image',
+    description: 'original description',
+    output: {
+      schema: { type: 'object' },
+      render: (_args, value) => [{ type: 'text', text: `rendered:${value.path}` }],
+    },
+    isConcurrencySafe: () => true,
+    presentCall: args => ({ card: 'generic', title: `Read image ${args.file_path}`, kind: 'read', locations: [{ path: args.file_path }] }),
+  }
+  const shim = createReadImageShim(original, ctx)
+  const exec = {
+    agent: { options: { provider: 'openai', model: 'gpt-image' } },
+    signal: undefined,
+  }
+  const value = await shim.execute({ file_path: '/tmp/a.png' }, exec)
+  assert.equal(value.path, '/tmp/a.png')
+  assert.equal(value.image.attachmentId, 'att-1')
+  assert.equal(value.image.bytes, 3)
+  assert.equal(emitted.length, 1)
+  assert.equal(emitted[0][0], 'fs/observed')
+  assert.deepEqual(emitted[0][2], { kind: 'present', version: 1 })
+  assert.deepEqual(shim.output.render({}, value), [{ type: 'text', text: 'rendered:/tmp/a.png' }])
+})
+
+test('read_image shim preserves route and extension gates', async () => {
+  const llm = {
+    async resolveModelInfo() {
+      return { inputModalities: ['text'] }
+    },
+  }
+  const fs = {
+    resolve: async () => assert.fail('fs.resolve must not run before the route gate'),
+    stat: async () => assert.fail('fs.stat must not run before the route gate'),
+    readBytes: async () => assert.fail('fs.readBytes must not run before the route gate'),
+  }
+  const ctx = {
+    get(name) {
+      return { fs, attachments: { imageLimits: { mediaTypes: ['image/png'], maxImageBytes: 1, maxMessageImageBytes: 1, maxImageDimension: 1, maxImagePixels: 1 } }, llm }[name]
+    },
+    emit() {},
+  }
+  const original = {
+    name: 'read_image',
+    description: 'original description',
+    output: { schema: { type: 'object' }, render: () => [] },
+  }
+  const shim = createReadImageShim(original, ctx)
+  const exec = { agent: { options: { provider: 'openai', model: 'text-only' } }, signal: undefined }
+
+  await assert.rejects(
+    () => shim.execute({ file_path: '/tmp/a.png' }, exec),
+    /model "text-only" does not declare image input/,
+  )
+  await assert.rejects(
+    () => shim.execute({ file_path: '/tmp/a.txt' }, exec),
+    /read_image only accepts PNG\/JPEG\/WebP\/GIF paths/,
+  )
 })
