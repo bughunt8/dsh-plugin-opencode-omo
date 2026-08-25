@@ -1,5 +1,5 @@
 diff --git a/packages/core/agent-loop/src/agent.ts b/packages/core/agent-loop/src/agent.ts
-index 668ef65..626468d 100644
+index 3ef1ec7..75944e5 100644
 --- a/packages/core/agent-loop/src/agent.ts
 +++ b/packages/core/agent-loop/src/agent.ts
 @@ -16,7 +16,7 @@ import type {
@@ -47,7 +47,7 @@ index 668ef65..626468d 100644
        )
        const assembler = new BlockAssembler()
        const chunkSeqs: number[] = []
-@@ -411,6 +411,7 @@ export class ReactLoopAgent implements Agent {
+@@ -430,6 +430,7 @@ export class ReactLoopAgent implements Agent {
      system: string,
      boundaryMessages: Message[],
      signal: AbortSignal,
@@ -55,7 +55,7 @@ index 668ef65..626468d 100644
    ): Promise<{ request: GenerateOptions; preparedCall?: PreparedLlmCall }> {
      const { session } = this
  
-@@ -460,6 +461,7 @@ export class ReactLoopAgent implements Agent {
+@@ -479,6 +480,7 @@ export class ReactLoopAgent implements Agent {
        ...preparedCall === undefined ? {} : { adapterDefaults: preparedCall.adapterDefaults },
        ...system ? { system } : {},
        ...tools.length > 0 ? { tools } : {},
@@ -63,7 +63,7 @@ index 668ef65..626468d 100644
      })
      const baseline = this.session.requestHeader()
      if (!this.requestHeaderLogged) {
-@@ -485,7 +487,9 @@ export class ReactLoopAgent implements Agent {
+@@ -504,7 +506,9 @@ export class ReactLoopAgent implements Agent {
  
      const request = markAgentLoopRequest(deepFreeze({
        ...header.config,
@@ -198,7 +198,7 @@ index ef67569..c240593 100644
    const at = a.tools ?? []
    const bt = b.tools ?? []
 diff --git a/packages/core/session/src/types.ts b/packages/core/session/src/types.ts
-index 17aacd1..553a7e8 100644
+index 31ce28a..f9676e2 100644
 --- a/packages/core/session/src/types.ts
 +++ b/packages/core/session/src/types.ts
 @@ -207,6 +207,8 @@ export interface EpochHeader {
