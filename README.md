@@ -83,7 +83,7 @@ then restart dsh.
 
 **This release depends on one dsh-side patch.** Apply it to deepseek-harness for full maxSteps fidelity; the patches are under [`patches/`](patches/README.md), split by feature:
 
-- `patches/0001-agent-pre-step-assistant-prefill.patch` — adds optional `assistantPrefill` to `PreStepDecision`; the loop appends it to the request after the derived history and logs it on `request/header` (request-only, never a session message). The plugin uses it to restore opencode's `MAX_STEPS_PROMPT` assistant-role semantics. **Runtime compatibility**: the host plugin scans the installed `@deepseek-ai/dsh-agent-loop` bundle for the compiled `assistantPrefill` marker. When the patch is absent, maxSteps automatically degrades to an equivalent synthetic user message (nothing is silently dropped) and the `/roles` response carries the warning to the browser; the web client shows it once per page load via the native `@deepseek-ai/dsh-client-ui-primitives` `Toast` (4 seconds, non-blocking).
+- `patches/0001-agent-pre-step-assistant-prefill.patch` — adds optional `assistantPrefill` to `PreStepDecision`; the loop appends it to the request after the derived history and logs it on `request/header` (request-only, never a session message). The plugin uses it to restore opencode's `MAX_STEPS_PROMPT` assistant-role semantics. This gap still exists in `dsh-v0.1.1-rc.2`; the upstream feature request is tracked in [deepseek-harness discussion #2407](https://github.com/deepseek-ai/deepseek-harness/discussions/2407). **Runtime compatibility**: the host plugin scans the installed `@deepseek-ai/dsh-agent-loop` bundle for the compiled `assistantPrefill` marker. When the patch is absent, the same `MAX_STEPS_PROMPT` text is rendered as a system-prompt section for the ceiling step (text identical, position degraded; nothing is silently dropped) and the `/roles` response carries the warning to the browser; the web client shows it once per page load via the native `@deepseek-ai/dsh-client-ui-primitives` `Toast` (4 seconds, non-blocking).
 
 ```sh
 cd /path/to/deepseek-harness
@@ -92,7 +92,7 @@ npm run build:lib:host
 npx vitest run packages/core/agent-loop/tests/interception.spec.ts
 ```
 
-- Provider-visible `format`/`toolChoice` is still a proposal (see `DSH_CHANGE_PROPOSALS.md`); omo's regular path does not use it and the standalone structured-output plugin covers the common route.
+- Provider-visible `format`/`toolChoice` remains an unpatched proposal (no dsh-side file is shipped for it); omo's regular path does not use it and the standalone structured-output plugin covers the common route.
 
 Everything else runs on unmodified dsh seams: the preset is published through `$DSH_HOME/.agent-presets` and the composer picker occupies the existing `conversation.input.left` slot (the client registers through `ctx.slots.inject()`, so it waits for the declaring parent regardless of out-of-tree bundle apply order).
 
@@ -127,7 +127,7 @@ Full report: `docs/exps/2026-08-15-opencode-omo-equivalence-bench.md`; raw trans
 
 ## Remaining gaps
 
-1. **dsh-side (patch provided)**: `PreStepDecision.assistantPrefill`. Without the `patches/` patch the maxSteps prompt is degraded to a synthetic user message; after applying the patch this gap is closed.
+1. **dsh-side (patch provided)**: `PreStepDecision.assistantPrefill`. Without the `patches/` patch the maxSteps prompt is degraded to a system-prompt section (same text and trigger, different position); after applying the patch this gap is closed.
 2. **dsh-side (proposal, medium)**: `GenerateOptions.format` / `toolChoice`. omo's regular path does not use them; the standalone structured-output plugin covers the common route.
 3. Child subagent per-role sampling cannot reliably resolve the role id (dsh child headers/descriptors do not carry it); primary-role sampling defaults ARE applied and children inherit the session model.
 4. Plan files: dsh itself does not persist them; the plugin writes `.opencode/plans/*` after `exit_plan_mode` approval. A first-class plan-file seam remains an optional improvement.
