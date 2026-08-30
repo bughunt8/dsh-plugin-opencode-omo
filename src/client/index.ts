@@ -41,6 +41,17 @@ export const ROLES_ENDPOINT = '/plugins/@royenheart/dsh-plugin-opencode-omo/role
 export const ROLE_ENDPOINT = '/plugins/@royenheart/dsh-plugin-opencode-omo/role'
 export const ROLE_CONFIG_ENDPOINT = '/plugins/@royenheart/dsh-plugin-opencode-omo/role-config'
 
+/** Minimal shape of the rc.2 `llm.models` catalog payload. The published
+ * `@deepseek-ai/dsh-client-connection` ships no `.d.ts`, so these callbacks
+ * are annotated explicitly instead of flowing through `any`. */
+interface LlmEffortEntry { id: string; name: string }
+interface LlmModelEntry {
+  id: string
+  name: string
+  reasoning?: { efforts?: LlmEffortEntry[]; defaultEffort?: string }
+}
+interface LlmModelGroup { id: string; models: LlmModelEntry[] }
+
 /** Flatten one model catalog response into the picker vocabulary. */
 function catalogOf(
   response: Awaited<ReturnType<ConnectionHandle['api']['llm']['models']>>,
@@ -48,13 +59,13 @@ function catalogOf(
   if (!response.result.ok) {
     throw new Error(`${response.result.error.code}: ${response.result.error.message}`)
   }
-  return response.result.value.groups.flatMap(group =>
-    group.models.map(model => ({
+  return response.result.value.groups.flatMap((group: LlmModelGroup) =>
+    group.models.map((model: LlmModelEntry) => ({
       provider: group.id,
       model: model.id,
       label: model.name,
-      ...(model.reasoning?.efforts.length
-        ? { efforts: model.reasoning.efforts.map(effort => ({ id: effort.id, name: effort.name })) }
+      ...(model.reasoning?.efforts?.length
+        ? { efforts: model.reasoning.efforts.map((effort: LlmEffortEntry) => ({ id: effort.id, name: effort.name })) }
         : {}),
       ...(model.reasoning?.defaultEffort === undefined ? {} : { defaultEffort: model.reasoning.defaultEffort }),
     })),
