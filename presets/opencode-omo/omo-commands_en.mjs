@@ -23,7 +23,7 @@ const COMMANDS = [
   },
   {
     name: 'refactor',
-    description: 'Refactor following the repository's existing patterns (loads the refactor skill)',
+    description: 'Refactor following the repository\'s existing patterns (loads the refactor skill)',
     text: 'Load the `refactor` skill with the skill tool and follow it for the requested refactor.',
   },
   {

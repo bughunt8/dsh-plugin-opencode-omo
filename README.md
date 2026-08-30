@@ -132,3 +132,25 @@ Full report: `docs/exps/2026-08-15-opencode-omo-equivalence-bench.md`; raw trans
 3. Child subagent per-role sampling cannot reliably resolve the role id (dsh child headers/descriptors do not carry it); primary-role sampling defaults ARE applied and children inherit the session model.
 4. Plan files: dsh itself does not persist them; the plugin writes `.opencode/plans/*` after `exit_plan_mode` approval. A first-class plan-file seam remains an optional improvement.
 5. team-mode TUI, comment-checker CLI, and hashline diff enhancer remain non-LLM/editing experience differences.
+
+## English (_en) variant
+
+The shipped UI text (role catalog descriptions, settings labels, compat warnings, preset description, delegation routing table, and slash-command descriptions) is Chinese. An English variant ships alongside it as `*_en` files; the Chinese originals are untouched:
+
+| Surface | English file |
+|---|---|
+| Role catalog (ids/modes/order preserved) | `src/core/omo-roles_en.ts` |
+| dsh compat warnings | `src/core/dsh-capabilities_en.ts` |
+| Role picker / settings UI / host+client entries | `src/client/RoleSelect_en.tsx`, `OmoSettingsSection_en.tsx`, `RoleSettings_en.tsx`, `src/client/index_en.ts`, `src/index_en.ts`, `src/omo-role-registry_en.ts` |
+| Preset description (mode picker) | `presets/opencode-omo/preset_en.yml` |
+| Delegation routing table / slash commands | `presets/opencode-omo/driver_en.mjs`, `omo-commands_en.mjs` |
+
+To run the English set:
+
+1. Point the build at the `_en` entries in `tsdown.config.ts` (`src/index_en.ts`, `src/client/index_en.ts`) and rebuild.
+2. Point the two preset rows in `agent.cordis.yml` at `./driver_en.mjs` and `./omo-commands_en.mjs`.
+3. Re-point the user-root preset symlink so `preset.yml` resolves to `preset_en.yml` (the roster reads the file by that name).
+4. Restart dsh.
+
+Compatibility: both variants register the **same** settings namespace (`opencode-omo-roles`) and the same HTTP endpoints, so per-role model/fallback configuration made through either variant keeps working after switching; `tests/omo-host_en.spec.mjs` pins this cross-variant behavior, and `tests/omo-roles_en.spec.mjs` pins catalog parity, ASCII-only strings, and that the originals still carry their Chinese text.
+
