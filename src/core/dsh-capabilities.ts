@@ -1,8 +1,9 @@
 /**
  * Detection of dsh-side seams the plugin can use, plus the degradation path
  * taken when the harness predates the seam. dsh is still under development, so
- * a profile can easily run a build that lacks `patches/0001-…-assistant-prefill`;
- * the plugin must keep working and must tell the user what degraded.
+ * a profile can easily run a build that still has a leftover local
+ * `assistantPrefill` seam; the plugin must keep working and must tell the
+ * user which channel maxSteps uses.
  *
  * The seam has no runtime flag (the patch is structural), so the detector
  * resolves the installed `@deepseek-ai/dsh-agent-loop` entry and checks for
@@ -25,8 +26,8 @@ export interface DshCompat {
   readonly detectionFailed: boolean
 }
 
-export const ASSISTANT_PREFILL_WARNING = '当前 dsh 构建缺少 agent/pre-step assistantPrefill 补丁：maxSteps 触顶提示已降级为系统提示词注入（文本相同但位于 system prompt，非 assistant 角色续写）。请应用 patches/0001-agent-pre-step-assistant-prefill.patch 并重建 harness。'
-export const DETECTION_FAILED_WARNING = '无法确认 dsh 是否支持 assistantPrefill（@deepseek-ai/dsh-agent-loop 解析失败）：maxSteps 触顶提示使用系统提示词注入降级。'
+export const ASSISTANT_PREFILL_WARNING = '当前 dsh 没有 assistantPrefill 缝：maxSteps 触顶提示以系统提示词注入（文本与 opencode 相同，但位于 system prompt，不是 assistant 角色续写）。这是 0.1.2 的默认路径，不再需要打本地补丁。'
+export const DETECTION_FAILED_WARNING = '无法确认 dsh 是否带有 leftover assistantPrefill（@deepseek-ai/dsh-agent-loop 解析失败）：maxSteps 触顶提示使用系统提示词注入。'
 
 let cached: DshCompat | undefined
 

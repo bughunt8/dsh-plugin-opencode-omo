@@ -1,4 +1,4 @@
-# opencode-omo loop behavior on native dsh seams (one request-tail patch, no driver seam)
+# opencode-omo loop behavior on native dsh seams (no driver seam, no local prefill patch)
 
 ## Objective
 
@@ -19,7 +19,7 @@ seam:
 | Suppress harness identity + runtime snapshot | `complete: true` + `ctx.systemPrompt.suppressRuntimeContext()` |
 | opencode per-model tool gating (apply_patch vs edit/write) | `system-prompt/assemble` waterfall mutates `assembly.tools` |
 | Ultrawork keyword detection before assembly | `agent/inbox/claimed` (fires inside `preStep` before `systemPrompt.assemble`) |
-| maxSteps + verbatim MAX_STEPS_PROMPT | `agent/pre-step` returns the assistant-role tail on a patched harness; on an unpatched harness the same text rides a system-prompt section for the ceiling step |
+| maxSteps + verbatim MAX_STEPS_PROMPT | system-prompt section on stock 0.1.2; leftover local `assistantPrefill` is still used if present |
 | Role primary model + ultrawork override | `agent/request` waterfall |
 | Fallback chain before harness retry policy | `agent/request-error` waterfall returning `{ kind: 'retry' }` |
 
@@ -30,22 +30,18 @@ probe tests against the dsh test harness: complete persona replacement, gpt
 tool gating, role route, request-error fallback, max-steps injection, and
 ultrawork routing all fire with a plain `ReactLoopAgent`.
 
-## Current fidelity posture (dsh-v0.1.1-rc.2)
+## Current fidelity posture (dsh 0.1.2-alpha.2)
 
-1. `PreStepDecision.assistantPrefill` is NOT yet in the official tag. The
-   plugin therefore still ships `patches/0001-agent-pre-step-assistant-prefill.patch`;
-   once applied, `MAX_STEPS_PROMPT` rides the request tail as an
-   assistant-role prefill and is logged only on `request/header` (upstream
-   proposal: https://github.com/deepseek-ai/deepseek-harness/discussions/2407).
-   Without the patch the same text degrades to a complete-prompt section, not
-   a synthetic user message and never a session message.
+1. `PreStepDecision.assistantPrefill` is still absent upstream. This plugin
+   **no longer ships** a local patch for it. `MAX_STEPS_PROMPT` is a
+   system-prompt section on the ceiling step (same text and trigger as
+   opencode; different role). Upstream:
+   https://github.com/deepseek-ai/deepseek-harness/discussions/2407
 
-   The patch is shaped around dsh's own rules, not the removed per-call
-   rewrite seams: it is header-logged so every model-visible byte remains
-   reconstructable from the session log (Agent Note
-   `2026-07-05-reconstructable-requests`), and it reuses the archived
-   session-prefix pattern (`2026-07-07-session-prefix`) without fabricating
-   `assistant/message`, `user/message`, or any other session event.
+   Behavioral gaps vs opencode / a leftover patched harness: assistant vs
+   system role, token placement, and reconstructable-requests (live assembly
+   vs `request/header`). Transcript/stats/compaction still omit the ceiling
+   text. Nothing is silently dropped.
 
 2. The complete persona text provider has no turn/step argument. The step about
    to run is inferred from the durable log (`turn/start` + last `step/start`),
@@ -71,18 +67,14 @@ and keep shipped updates live.
 
 ## dsh-side footprint after the re-scan
 
-One, and it is now a patch file rather than a source-tree change:
+None in this repository.
 
 - The preset-root merge, the entire `dsh-agent-driver` + `agent-loop` subclass
   seam, and the `conversation.input.role` composer seat were all dropped in
   favor of the official `$DSH_HOME/.agent-presets` user root, the native
   prompt/event waterfalls, and the existing `conversation.input.left` list slot.
-- The only remaining harness change is
-  `patches/0001-agent-pre-step-assistant-prefill.patch`
-  (`PreStepDecision.assistantPrefill`), needed for opencode's assistant-role
-  MAX_STEPS_PROMPT tail. It applies cleanly to `dsh-v0.1.1-rc.2` and is
-  tracked upstream in discussion #2407. The patchless fallback is a system
-  prompt section; no session message is ever fabricated.
+- The previous `assistantPrefill` patch is deleted. Stock 0.1.2 uses a
+  system-prompt section. Discussion #2407 remains the upstream ask.
 
-Everything else runs on an unmodified `dsh-v0.1.1-rc.2` checkout.
+Everything else runs on an unmodified 0.1.2-alpha.2 checkout.
 

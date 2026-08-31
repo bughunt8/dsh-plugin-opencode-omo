@@ -12,7 +12,6 @@
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
-import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import z from '@deepseek-ai/schemastery'
 import { OmoRoleRegistry } from './omo-role-registry.ts'
@@ -84,7 +83,7 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
  */
 export function apply(ctx: Context): void {
   const scope = ctx.settings.register(
-    settingsNamespace(OMO_ROLE_SETTINGS_NAMESPACE),
+    OMO_ROLE_SETTINGS_NAMESPACE,
     SettingsSchema,
     { applies: 'live' },
   )

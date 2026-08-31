@@ -7,7 +7,7 @@ import type { SessionId } from '@deepseek-ai/dsh-client-connection/client'
 import type { OmoModelSelection } from '../core/omo-roles'
 
 export declare const name: string
-export declare const inject: string[]
+export declare const inject: ['slots', 'remote', 'remote.session']
 export declare function apply(ctx: Context): void
 
 export declare const ROLES_ENDPOINT: string

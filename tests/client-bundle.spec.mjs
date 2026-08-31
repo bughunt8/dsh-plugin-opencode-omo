@@ -51,7 +51,7 @@ function loadClientBundle() {
 test('client bundle loads under the module loader and exports the plugin face', () => {
   const exportsObj = loadClientBundle()
   assert.equal(exportsObj.name, 'opencode-omo-client')
-  assert.equal(JSON.stringify(exportsObj.inject), JSON.stringify(['slots', 'connection']))
+  assert.equal(JSON.stringify(exportsObj.inject), JSON.stringify(['slots', 'remote', 'remote.session']))
   assert.equal(typeof exportsObj.apply, 'function')
   assert.equal(exportsObj.ROLES_ENDPOINT, '/plugins/@royenheart/dsh-plugin-opencode-omo/roles')
   assert.equal(typeof exportsObj.RoleSelect, 'function')

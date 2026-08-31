@@ -79,24 +79,31 @@ npm install -g typescript-language-server typescript
 
 then restart dsh.
 
-**web_fetch provider.** The preset enables dsh's native `web_fetch` tool, so the bundle patch also registers the native HTTP fetch provider (`@deepseek-ai/dsh-web-fetch-http`) into the shared `ctx.web`; `install.py` links that package into the profile module tree. `web_search` keeps using the existing DeepSeek search provider (`DEEPSEEK_API_KEY`). Other presets keep `fetch: false`, so their tool surface is unchanged.
+**web_fetch provider.** The preset enables dsh's native `web_fetch` tool (`fetch: true`). Official 0.1.2 already registers `@deepseek-ai/dsh-web-fetch-http` in the base bundle, so this plugin does **not** insert a second fetch row (that would throw `WEB_DUPLICATE_PROVIDER`). `web_search` keeps using the existing DeepSeek search provider (`DEEPSEEK_API_KEY`). Other presets keep `fetch: false`, so their tool surface is unchanged.
 
 ## Required dsh-side changes
 
-**This release depends on one dsh-side patch.** Apply it to deepseek-harness for full maxSteps fidelity; the patches are under [`patches/`](patches/README.md), split by feature:
+**This release ships no dsh patches.** Official 0.1.2-alpha.2 has no `PreStepDecision.assistantPrefill`; the plugin no longer carries `patches/0001-agent-pre-step-assistant-prefill.patch` which is:
 
-- `patches/0001-agent-pre-step-assistant-prefill.patch` — adds optional `assistantPrefill` to `PreStepDecision`; the loop appends it to the request after the derived history and logs it on `request/header` (request-only, never a session message). The plugin uses it to restore opencode's `MAX_STEPS_PROMPT` assistant-role semantics. This gap still exists in `dsh-v0.1.1-rc.2`; the upstream feature request is tracked in [deepseek-harness discussion #2407](https://github.com/deepseek-ai/deepseek-harness/discussions/2407). **Runtime compatibility**: the host plugin scans the installed `@deepseek-ai/dsh-agent-loop` bundle for the compiled `assistantPrefill` marker. When the patch is absent, the same `MAX_STEPS_PROMPT` text is rendered as a system-prompt section for the ceiling step (text identical, position degraded; nothing is silently dropped) and the `/roles` response carries the warning to the browser; the web client shows it once per page load via the native `@deepseek-ai/dsh-client-ui-primitives` `Toast` (4 seconds, non-blocking).
+maxSteps still fires. The ceiling text is opencode's verbatim `MAX_STEPS_PROMPT`, injected as a **system-prompt section** on the step that hits the cap. That is the supported 0.1.2 path (`ctx.systemPrompt.section`), not a silent drop.
 
-```sh
-cd /path/to/deepseek-harness
-git apply /path/to/dsh-plugin-opencode-omo/patches/0001-agent-pre-step-assistant-prefill.patch
-npm run build:lib:host
-npx vitest run packages/core/agent-loop/tests/interception.spec.ts
-```
+### Behavioral gaps after dropping the assistantPrefill patch
 
-- Provider-visible `format`/`toolChoice` remains an unpatched proposal (no dsh-side file is shipped for it); omo's regular path does not use it and the standalone structured-output plugin covers the common route.
+These are intentional and will not match stock opencode until [discussion #2407](https://github.com/deepseek-ai/deepseek-harness/discussions/2407) (or an equivalent) lands upstream:
 
-Everything else runs on unmodified dsh seams: the preset is published through `$DSH_HOME/.agent-presets` and the composer picker occupies the existing `conversation.input.left` slot (the client registers through `ctx.slots.inject()`, so it waits for the declaring parent regardless of out-of-tree bundle apply order).
+| Surface | opencode / patched-harness | This plugin on stock 0.1.2 |
+|---|---|---|
+| Role of `MAX_STEPS_PROMPT` | Assistant-role continuation at the end of the request | System-prompt prefix for that step |
+| Session transcript / stats / compaction | Request-only (header), not a session message | Also not a session message (system section is reassembled) |
+| How strictly models stop / wrap up | Tuned for an assistant tail | May treat a system reminder more weakly or more strongly |
+| Token placement | Extra assistant tokens on that request | Extra system tokens on that request |
+| Reconstructable-requests | Logged on `request/header` | Rebuilt from the live prompt assembly |
+
+The host still scans `@deepseek-ai/dsh-agent-loop` for a compiled `assistantPrefill` marker. If you run a **local** harness that still has the old seam, the driver uses the assistant tail automatically. The `/roles` payload's `compat.warnings` and a one-shot browser Toast describe the system-prompt path; they no longer tell you to apply a patch from this repo.
+
+Provider-visible `format`/`toolChoice` remains an unpatched proposal; omo's regular path does not use it.
+
+Everything else runs on unmodified dsh seams: the preset is published through `$DSH_HOME/.agent-presets` and the composer picker occupies the existing `conversation.input.left` slot.
 
 ## Bench experiments (equivalence validation)
 
@@ -125,11 +132,11 @@ Full report: `docs/exps/2026-08-15-opencode-omo-equivalence-bench.md`; raw trans
 - **MCP**: separate plugin [`dsh-plugin-mcp-support`](../dsh-plugin-mcp-support) mounts native `@deepseek-ai/dsh-mcp-client` servers from its bundle-row config or the persisted `mcp-support` settings namespace.
 - **Structured output**: separate plugin [`dsh-plugin-structured-output`](../dsh-plugin-structured-output) provides opencode-style `/json-schema` + `StructuredOutput` validation on native seams (no dsh-side format field). Its visibility is opt-in per preset via Settings → 结构化输出工具 (Structured output); no mode is enabled by default.
 - **Partial**: extracted family templates keep dynamic sections filled by dsh-native data rather than omo's builder output; structured output is tool-enforced rather than `tool_choice: required`; hooks are regex/simplified ports; AGENTS.md injection is dsh-native; child subagents inherit the session model because dsh child headers/descriptors do not carry the subagent role id (primary-role sampling defaults ARE applied).
-- **Requires one dsh-side patch (see `patches/`, audited 2026-08-15)**: `PreStepDecision.assistantPrefill` for opencode's MAX_STEPS_PROMPT. Provider-visible `format`/`toolChoice` remains a proposal; omo's regular path does not use it and the standalone structured-output plugin covers the common route.
+- **No dsh-side patch in this repo.** maxSteps uses a system-prompt section on stock 0.1.2 (see “Behavioral gaps after dropping the assistantPrefill patch” above). `format`/`toolChoice` remains a proposal; the standalone structured-output plugin covers the common route.
 
 ## Remaining gaps
 
-1. **dsh-side (patch provided)**: `PreStepDecision.assistantPrefill`. Without the `patches/` patch the maxSteps prompt is degraded to a system-prompt section (same text and trigger, different position); after applying the patch this gap is closed.
+1. **maxSteps role (accepted, no local patch)**: on stock 0.1.2, `MAX_STEPS_PROMPT` is a system-prompt section, not an assistant-role request tail. Same text and trigger; models may treat the role differently than opencode. Tracked upstream as [discussion #2407](https://github.com/deepseek-ai/deepseek-harness/discussions/2407).
 2. **dsh-side (proposal, medium)**: `GenerateOptions.format` / `toolChoice`. omo's regular path does not use them; the standalone structured-output plugin covers the common route.
 3. Child subagent per-role sampling cannot reliably resolve the role id (dsh child headers/descriptors do not carry it); primary-role sampling defaults ARE applied and children inherit the session model.
 4. Plan files: dsh itself does not persist them; the plugin writes `.opencode/plans/*` after `exit_plan_mode` approval. A first-class plan-file seam remains an optional improvement.

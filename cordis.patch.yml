@@ -11,12 +11,8 @@
 # required.
 #
 # The preset enables dsh's native web_fetch tool (`fetch: true` in its
-# `tool-web` row), so this bundle also registers the native HTTP fetch
-# provider into the shared `ctx.web`. With exactly one fetch provider
-# registered, dsh's web seam auto-selects it; no `web` row override is needed.
+# `tool-web` row). Official 0.1.2 already registers `@deepseek-ai/dsh-web-fetch-http`
+# in the base bundle; a second insert would throw WEB_DUPLICATE_PROVIDER.
 - insert:
     - id: opencode-omo
       name: '@royenheart/dsh-plugin-opencode-omo'
-
-    - id: opencode-omo-web-fetch
-      name: '@deepseek-ai/dsh-web-fetch-http'

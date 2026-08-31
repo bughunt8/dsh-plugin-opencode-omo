@@ -15,7 +15,7 @@ import type {} from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 // Type-only: pulls the settings.section SlotMap declaration.
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
-import type { ConnectionHandle, SessionId } from '@deepseek-ai/dsh-client-connection/client'
+import type { SessionId } from '@deepseek-ai/dsh-client-connection/client'
 import { RoleSelect } from './RoleSelect.tsx'
 import type { RoleSelectInjected } from './RoleSelect.tsx'
 import { OmoSettingsSection } from './OmoSettingsSection.tsx'
@@ -34,21 +34,48 @@ export type { RoleSettingsInjected, RoleSettingsProps } from './RoleSettings.tsx
 /** Cordis plugin name. */
 export const name = 'opencode-omo-client'
 
-/** Required services: slot registry + the model wire. */
-export const inject = ['slots', 'connection']
+/** Required services: slot registry + the 0.1.2 session remote (catalog + select). */
+export const inject = ['slots', 'remote', 'remote.session']
 
 export const ROLES_ENDPOINT = '/plugins/@royenheart/dsh-plugin-opencode-omo/roles'
 export const ROLE_ENDPOINT = '/plugins/@royenheart/dsh-plugin-opencode-omo/role'
 export const ROLE_CONFIG_ENDPOINT = '/plugins/@royenheart/dsh-plugin-opencode-omo/role-config'
 
+/** RemoteResult face used by `ctx.remote.session` (no `.result` wrapper). */
+type RemoteResult<T> =
+  | { ok: true; value: T }
+  | { ok: false; error: { code: string; message: string } }
+
+type ModelCatalogGroup = {
+  readonly id: string
+  readonly models: readonly {
+    readonly id: string
+    readonly name: string
+    readonly reasoning?: {
+      readonly efforts: readonly { readonly id: string; readonly name: string }[]
+      readonly defaultEffort?: string
+    }
+  }[]
+}
+
+/** Session remote: Host-generation catalog + per-session model select. */
+type SessionRemote = {
+  modelCatalog(): Promise<RemoteResult<{ groups: readonly ModelCatalogGroup[] }>>
+  selectModel(request: {
+    sessionId: SessionId
+    provider: string
+    model: string
+  }): Promise<RemoteResult<unknown>>
+}
+
 /** Flatten one model catalog response into the picker vocabulary. */
 function catalogOf(
-  response: Awaited<ReturnType<ConnectionHandle['api']['llm']['models']>>,
+  response: RemoteResult<{ groups: readonly ModelCatalogGroup[] }>,
 ): readonly OmoCatalogModel[] {
-  if (!response.result.ok) {
-    throw new Error(`${response.result.error.code}: ${response.result.error.message}`)
+  if (!response.ok) {
+    throw new Error(`${response.error.code}: ${response.error.message}`)
   }
-  return response.result.value.groups.flatMap(group =>
+  return response.value.groups.flatMap(group =>
     group.models.map(model => ({
       provider: group.id,
       model: model.id,
@@ -69,18 +96,18 @@ function catalogOf(
  * @param ctx - client root context.
  */
 export function apply(ctx: Context): void {
-  const connection = ctx.get('connection') as ConnectionHandle
+  const session = ctx.get('remote.session') as SessionRemote
 
   const loadModels = async (): Promise<readonly OmoCatalogModel[]> =>
-    catalogOf(await connection.api.llm.models({}))
+    catalogOf(await session.modelCatalog())
 
   const selectModel = async (selection: { provider: string; model: string }, sessionId: SessionId): Promise<boolean> => {
-    const response = await connection.api.sessions.selectModel({
+    const response = await session.selectModel({
       sessionId,
       provider: selection.provider,
       model: selection.model,
     })
-    return response.result.ok
+    return response.ok
   }
 
   ctx.effect(() => {
