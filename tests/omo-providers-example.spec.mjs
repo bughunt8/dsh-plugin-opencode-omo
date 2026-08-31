@@ -16,12 +16,12 @@ const EXAMPLE = new URL('../docs/omo-json-providers.example.yml', import.meta.ur
 // Real vendor endpoints, verified against the providers' official docs:
 //   apiyi          -> https://docs.apiyi.com/ko/faq/base-url-config
 //   zai-coding-plan -> https://docs.z.ai/devpack/quick-start (coding plan)
-//   moonshotai     -> https://platform.kimi.com/docs/api/overview
+//   moonshotai     -> https://platform.moonshot.ai/docs/api/overview (international)
 //   minimax        -> https://api.minimax.chat/v1 (international endpoint)
 const EXPECTED_BASE_URL = {
   apiyi: 'https://api.apiyi.com/v1',
   'zai-coding-plan': 'https://api.z.ai/api/coding/paas/v4',
-  moonshotai: 'https://api.moonshot.cn/v1',
+  moonshotai: 'https://api.moonshot.ai/v1',
   minimax: 'https://api.minimax.chat/v1',
 }
 

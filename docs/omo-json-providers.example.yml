@@ -13,9 +13,9 @@
 #   - zai-coding-plan: https://api.z.ai/api/coding/paas/v4
 #                     (Z.AI coding-plan subscription endpoint; a standard
 #                      Z.AI key uses https://api.z.ai/api/paas/v4 instead)
-#   - moonshotai:     https://api.moonshot.cn/v1
-#                     (Moonshot AI / Kimi, China endpoint; the international
-#                      endpoint is https://api.moonshot.ai/v1)
+#   - moonshotai:     https://api.moonshot.ai/v1
+#                     (Moonshot AI / Kimi, international endpoint; the
+#                      China endpoint is https://api.moonshot.cn/v1)
 #   - minimax:        https://api.minimax.chat/v1
 #                     (MiniMax, international OpenAI-compatible endpoint)
 #
@@ -53,7 +53,7 @@ llm-pi-ai:
       displayName: moonshotai
       apiKeyEnv: MOONSHOTAI_API_KEY
       api: openai-completions
-      baseURL: https://api.moonshot.cn/v1
+      baseURL: https://api.moonshot.ai/v1
       models:
         - id: kimi-k2.7-code
           contextWindow: 1000000
