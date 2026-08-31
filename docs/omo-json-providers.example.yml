@@ -6,12 +6,21 @@
 # time. These four providers are the ones the shipped omo.json example
 # (see the project README) uses beyond the built-in catalog.
 #
-# Every value below is a PLACEHOLDER:
-#   - apiKeyEnv names an environment variable you must set with the real key
-#     (e.g. `export APIYI_API_KEY=...`).
-#   - baseURL uses the reserved .invalid TLD on purpose; replace it with the
-#     real endpoint before use. Requests to a PLACEHOLDER URL fail loudly
-#     instead of silently misrouting.
+# baseURL values are the vendors' real OpenAI-compatible endpoints:
+#   - apiyi:          https://api.apiyi.com/v1
+#                     (API易; alternate mirrors: api-cf.apiyi.com/v1,
+#                      b.apiyi.com/v1, vip.apiyi.com/v1)
+#   - zai-coding-plan: https://api.z.ai/api/coding/paas/v4
+#                     (Z.AI coding-plan subscription endpoint; a standard
+#                      Z.AI key uses https://api.z.ai/api/paas/v4 instead)
+#   - moonshotai:     https://api.moonshot.cn/v1
+#                     (Moonshot AI / Kimi, China endpoint; the international
+#                      endpoint is https://api.moonshot.ai/v1)
+#   - minimax:        https://api.minimax.chat/v1
+#                     (MiniMax, international OpenAI-compatible endpoint)
+#
+# apiKeyEnv names an environment variable you must still set with your
+# own key (e.g. `export APIYI_API_KEY=...`) — the example never ships keys.
 #
 # YAML is valid as-is; paste under `llm-pi-ai:` and restart dsh.
 llm-pi-ai:
@@ -20,7 +29,7 @@ llm-pi-ai:
       displayName: apiyi
       apiKeyEnv: APIYI_API_KEY
       api: openai-completions
-      baseURL: https://PLACEHOLDER-apiyi.invalid/v1
+      baseURL: https://api.apiyi.com/v1
       models:
         - id: gpt-5.6-sol
           contextWindow: 1000000
@@ -32,7 +41,7 @@ llm-pi-ai:
       displayName: zai-coding-plan
       apiKeyEnv: ZAI_CODING_PLAN_API_KEY
       api: openai-completions
-      baseURL: https://PLACEHOLDER-zai-coding-plan.invalid/v1
+      baseURL: https://api.z.ai/api/coding/paas/v4
       models:
         - id: glm-5.3
           contextWindow: 1000000
@@ -44,7 +53,7 @@ llm-pi-ai:
       displayName: moonshotai
       apiKeyEnv: MOONSHOTAI_API_KEY
       api: openai-completions
-      baseURL: https://PLACEHOLDER-moonshotai.invalid/v1
+      baseURL: https://api.moonshot.cn/v1
       models:
         - id: kimi-k2.7-code
           contextWindow: 1000000
@@ -56,7 +65,7 @@ llm-pi-ai:
       displayName: minimax
       apiKeyEnv: MINIMAX_API_KEY
       api: openai-completions
-      baseURL: https://PLACEHOLDER-minimax.invalid/v1
+      baseURL: https://api.minimax.chat/v1
       models:
         - id: MiniMax-M3
           contextWindow: 1000000
