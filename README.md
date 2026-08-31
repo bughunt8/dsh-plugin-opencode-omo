@@ -154,3 +154,21 @@ To run the English set:
 
 Compatibility: both variants register the **same** settings namespace (`opencode-omo-roles`) and the same HTTP endpoints, so per-role model/fallback configuration made through either variant keeps working after switching; `tests/omo-host_en.spec.mjs` pins this cross-variant behavior, and `tests/omo-roles_en.spec.mjs` pins catalog parity, ASCII-only strings, and that the originals still carry their Chinese text.
 
+
+## General tab: omo.json defaults import
+
+Settings → opencode-omo → **General** provides an omo.json defaults flow:
+
+- **Use omo.json** ON/OFF — persisted in the same `opencode-omo-roles` namespace; when ON, the configured file is imported at host startup and immediately when switched on.
+- **omo.json location** — defaults to `~/.omo/omo.json`.
+- **Re-Import omo.json** — applies the file into the running host now and shows a per-role result summary (unknown roles and malformed entries are reported as warnings, valid entries still import).
+
+The file is a flat JSON map of role id → config (same shape as the role-config wire format):
+
+```json
+{
+  "oracle": { "model": {"provider":"tokeness","model":"gpt-5.5"}, "fallbackModels": [{"provider":"tokeness","model":"claude-opus-4-7"}], "maxSteps": 12 }
+}
+```
+
+A CLI equivalent ships at `scripts/omo.json.apply.mjs`: `node scripts/omo.json.apply.mjs [path] [--host http://127.0.0.1:3080]`. Files over 2 MB are refused unread, and imports never delete existing config — they overwrite only the roles present in the file.

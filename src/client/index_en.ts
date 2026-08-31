@@ -22,6 +22,8 @@ import { OmoSettingsSection } from './OmoSettingsSection_en.tsx'
 import type { OmoSettingsSectionProps } from './OmoSettingsSection_en.tsx'
 import { RoleSettingsSection } from './RoleSettings_en.tsx'
 import type { RoleSettingsInjected } from './RoleSettings_en.tsx'
+import { GeneralSettingsSection } from './GeneralSettings_en.tsx'
+import type { GeneralSettingsInjected } from './GeneralSettings_en.tsx'
 import type { OmoCatalogModel } from './omo-wire.ts'
 import type {} from './slots.ts'
 export { RoleSelect } from './RoleSelect_en.tsx'
@@ -30,6 +32,8 @@ export { OmoSettingsSection } from './OmoSettingsSection_en.tsx'
 export type { OmoSettingsSectionProps } from './OmoSettingsSection_en.tsx'
 export { RoleSettingsSection } from './RoleSettings_en.tsx'
 export type { RoleSettingsInjected, RoleSettingsProps } from './RoleSettings_en.tsx'
+export { GeneralSettingsSection } from './GeneralSettings_en.tsx'
+export type { GeneralSettingsInjected } from './GeneralSettings_en.tsx'
 
 /** Cordis plugin name. */
 export const name = 'opencode-omo-client'
@@ -40,6 +44,8 @@ export const inject = ['slots', 'connection']
 export const ROLES_ENDPOINT = '/plugins/@royenheart/dsh-plugin-opencode-omo/roles'
 export const ROLE_ENDPOINT = '/plugins/@royenheart/dsh-plugin-opencode-omo/role'
 export const ROLE_CONFIG_ENDPOINT = '/plugins/@royenheart/dsh-plugin-opencode-omo/role-config'
+export const OMO_JSON_ENDPOINT = '/plugins/@royenheart/dsh-plugin-opencode-omo/omo-json'
+export const OMO_JSON_IMPORT_ENDPOINT = '/plugins/@royenheart/dsh-plugin-opencode-omo/omo-json/import'
 
 /** Minimal shape of the rc.2 `llm.models` catalog payload. The published
  * `@deepseek-ai/dsh-client-connection` ships no `.d.ts`, so these callbacks
@@ -134,9 +140,21 @@ export function apply(ctx: Context): void {
       }),
     }, RoleSettingsSection))
 
+    const disposeGeneralTab = ctx.slots.inject('opencode-omo.settings.tab', () => ctx.slots.register({
+      name: 'opencode-omo.settings.tab',
+      id: 'general',
+      order: 1,
+      label: () => 'General',
+      inject: (): GeneralSettingsInjected => ({
+        omoJsonEndpoint: OMO_JSON_ENDPOINT,
+        omoJsonImportEndpoint: OMO_JSON_IMPORT_ENDPOINT,
+      }),
+    }, GeneralSettingsSection))
+
     return () => {
       disposeRole()
       disposeSettingsTab()
+      disposeGeneralTab()
       disposeSettings()
     }
   }, 'opencode-omo-client: role slots')

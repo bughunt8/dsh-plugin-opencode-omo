@@ -2,8 +2,11 @@
  * OmoSettingsSection — the single "opencode-omo" page in the global settings
  * nav. It owns one child tab slot (`opencode-omo.settings.tab`) so feature
  * pages nest under this section the same way the Plugins section nests its
- * tabs; the shipped tab is "Role Settings" (RoleSettingsSection).
+ * tabs; the shipped tabs are "Role Settings" (RoleSettingsSection) and
+ * "General" (GeneralSettingsSection). One tab renders at a time via the
+ * slot render options' entry selector.
  */
+import { useState } from 'react'
 import type { ReactElement } from 'react'
 import type {
   PropsRenderSlots, PropsRuntime,
@@ -13,6 +16,13 @@ import type {
 export type OmoSettingsSectionProps =
   PropsRuntime<'settings.section'>
   & PropsRenderSlots<'opencode-omo.settings.tab'>
+
+type TabId = 'roles' | 'general'
+
+const TABS: ReadonlyArray<{ id: TabId; label: string }> = [
+  { id: 'roles', label: 'Role Settings' },
+  { id: 'general', label: 'General' },
+]
 
 const STYLE: Record<string, React.CSSProperties> = {
   section: { display: 'flex', flexDirection: 'column', gap: 12, fontSize: 13, color: '#ffffff' },
@@ -27,7 +37,7 @@ const STYLE: Record<string, React.CSSProperties> = {
     color: '#e6e6e6',
     fontSize: 13,
     fontWeight: 500,
-    cursor: 'default',
+    cursor: 'pointer',
   },
   tabActive: {
     borderBottomColor: '#ffffff',
@@ -41,6 +51,7 @@ const STYLE: Record<string, React.CSSProperties> = {
  * @returns the section element.
  */
 export function OmoSettingsSection({ renderSlot }: OmoSettingsSectionProps): ReactElement {
+  const [active, setActive] = useState<TabId>('roles')
   return (
     <div style={STYLE.section}>
       <h2 style={STYLE.heading}>opencode-omo</h2>
@@ -48,16 +59,20 @@ export function OmoSettingsSection({ renderSlot }: OmoSettingsSectionProps): Rea
         opencode + omo alignment settings: configure the primary model, fallback chain, step budget, and ultrawork override for each omo role.
       </p>
       <div style={STYLE.tabs} role="tablist" aria-label="opencode-omo settings page">
-        <button
-          type="button"
-          role="tab"
-          aria-selected="true"
-          style={{ ...STYLE.tab, ...STYLE.tabActive }}
-        >
-          Role Settings
-        </button>
+        {TABS.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            role="tab"
+            aria-selected={active === tab.id}
+            style={{ ...STYLE.tab, ...(active === tab.id ? STYLE.tabActive : {}) }}
+            onClick={() => { setActive(tab.id) }}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
-      {renderSlot('opencode-omo.settings.tab', {})}
+      {renderSlot('opencode-omo.settings.tab', {}, { only: active })}
     </div>
   )
 }

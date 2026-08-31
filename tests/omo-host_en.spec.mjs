@@ -15,6 +15,8 @@ import { SettingsProvider } from '@deepseek-ai/dsh-settings'
 import { OMO_ROLES } from '../src/core/omo-roles.ts'
 import {
   OMO_DEFAULT_ROLE,
+  OMO_JSON_ENDPOINT,
+  OMO_JSON_IMPORT_ENDPOINT,
   OMO_ROLE_SETTINGS_NAMESPACE,
   ROLES_ENDPOINT,
   ROLE_ENDPOINT,
@@ -167,3 +169,92 @@ async function bootWith(entry, sharedDoc) {
   await ctx.plugin({ name: entry.name, inject: entry.inject, apply: entry.apply })
   return ctx
 }
+
+test('omo-json settings default to disabled with the standard path', async () => {
+  const { web } = await boot()
+  const response = await call(web, OMO_JSON_ENDPOINT)
+  assert.equal(response.status, 200)
+  assert.equal(response.payload.ok, true)
+  assert.equal(response.payload.enabled, false)
+  assert.equal(response.payload.path, '~/.omo/omo.json')
+})
+
+test('omo-json settings persist the toggle and path', async () => {
+  const { web } = await boot()
+  const update = await call(web, OMO_JSON_ENDPOINT, { enabled: true, path: '/tmp/custom-omo.json' })
+  assert.equal(update.status, 200)
+  assert.equal(update.payload.enabled, true)
+  assert.equal(update.payload.path, '/tmp/custom-omo.json')
+  const read = await call(web, OMO_JSON_ENDPOINT)
+  assert.equal(read.payload.enabled, true)
+  assert.equal(read.payload.path, '/tmp/custom-omo.json')
+})
+
+test('omo-json import applies a file into the registry through the endpoint', async () => {
+  const { ctx, web } = await boot()
+  const { mkdtemp, writeFile } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const dir = await mkdtemp(`${tmpdir()}/omo-json-`)
+  const file = `${dir}/omo.json`
+  await writeFile(file, JSON.stringify({
+    oracle: {
+      model: { provider: 'tokeness', model: 'gpt-5.5' },
+      fallbackModels: [{ provider: 'tokeness', model: 'claude-opus-4-7' }],
+    },
+    bogus: { model: { provider: 'x', model: 'y' }, fallbackModels: [] },
+  }))
+  const response = await call(web, OMO_JSON_IMPORT_ENDPOINT, { path: file })
+  assert.equal(response.status, 200)
+  assert.equal(response.payload.ok, true)
+  assert.equal(response.payload.imported, 1)
+  assert.ok(response.payload.errors.some((error) => error.includes('bogus')))
+  const config = ctx.omoRoles.configFor('oracle')
+  assert.equal(config.model.provider, 'tokeness')
+  assert.equal(config.fallbackModels.length, 1)
+})
+
+test('omo-json import is non-fatal on a missing file', async () => {
+  const { web } = await boot()
+  const response = await call(web, OMO_JSON_IMPORT_ENDPOINT, { path: '/definitely/missing/omo.json' })
+  assert.equal(response.status, 200)
+  assert.equal(response.payload.ok, false)
+  assert.equal(response.payload.imported, 0)
+})
+
+test('boot-time auto-import runs when omoJson.enabled is set', async () => {
+  const { mkdtemp, writeFile } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const dir = await mkdtemp(`${tmpdir()}/omo-auto-`)
+  const file = `${dir}/omo.json`
+  await writeFile(file, JSON.stringify({
+    metis: { model: { provider: 'tokeness', model: 'kimi-k3' }, fallbackModels: [] },
+  }))
+  const sharedDoc = {
+    'opencode-omo-roles': {
+      roles: {},
+      sessions: {},
+      omoJson: { enabled: true, path: file },
+    },
+  }
+  const ctx = await bootWith({ name, inject, apply }, sharedDoc)
+  // The startup import is async; poll until the registry reflects the file.
+  const deadline = Date.now() + 2000
+  let model
+  while (Date.now() < deadline) {
+    model = ctx.omoRoles.configFor('metis').model
+    if (model !== undefined) break
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+  assert.equal(model?.provider, 'tokeness')
+  assert.equal(model?.model, 'kimi-k3')
+})
+
+test('omo-json endpoints reject invalid paths with 400', async () => {
+  const { web } = await boot()
+  for (const bad of ['', 123, 'x'.repeat(1025)]) {
+    const configResponse = await call(web, OMO_JSON_ENDPOINT, { path: bad })
+    assert.equal(configResponse.status, 400)
+    const importResponse = await call(web, OMO_JSON_IMPORT_ENDPOINT, { path: bad })
+    assert.equal(importResponse.status, 400)
+  }
+})
