@@ -20,8 +20,8 @@ export type OmoSettingsSectionProps =
 type TabId = 'roles' | 'general'
 
 const TABS: ReadonlyArray<{ id: TabId; label: string }> = [
-  { id: 'roles', label: 'Role Settings' },
   { id: 'general', label: 'General' },
+  { id: 'roles', label: 'Role Settings' },
 ]
 
 const STYLE: Record<string, React.CSSProperties> = {
@@ -51,7 +51,7 @@ const STYLE: Record<string, React.CSSProperties> = {
  * @returns the section element.
  */
 export function OmoSettingsSection({ renderSlot }: OmoSettingsSectionProps): ReactElement {
-  const [active, setActive] = useState<TabId>('roles')
+  const [active, setActive] = useState<TabId>('general')
   return (
     <div style={STYLE.section}>
       <h2 style={STYLE.heading}>opencode-omo</h2>

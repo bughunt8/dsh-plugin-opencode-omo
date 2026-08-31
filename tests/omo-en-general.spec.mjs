@@ -33,10 +33,11 @@ test('GeneralSettings_en keeps the dark-theme contract', async () => {
   }
 })
 
-test('OmoSettingsSection_en renders both tabs and selects one via the slot only-option', async () => {
+test('OmoSettingsSection_en renders both tabs, General first and default-selected', async () => {
   const text = await source('OmoSettingsSection_en.tsx')
-  assert.ok(text.includes('Role Settings'))
-  assert.ok(text.includes('General'))
+  const tabs = text.slice(text.indexOf('const TABS'))
+  assert.ok(tabs.indexOf('General') < tabs.indexOf('Role Settings'), 'General must come before Role Settings')
+  assert.ok(text.includes("useState<TabId>('general')"), 'General must be the default-selected tab')
   assert.ok(text.includes('only:'), 'missing slot entry selector')
 })
 
@@ -44,4 +45,20 @@ test('the client entry registers the general tab', async () => {
   const text = await source('index_en.ts')
   assert.ok(text.includes("id: 'general'"), 'general tab entry not registered')
   assert.ok(text.includes('GeneralSettings'), 'general tab component not referenced')
+  const generalOrder = text.indexOf("id: 'general'")
+  const rolesOrder = text.indexOf("id: 'roles'")
+  assert.ok(generalOrder > 0 && rolesOrder > 0)
+  assert.ok(generalOrder < rolesOrder, 'general tab must register before roles')
+})
+
+test('GeneralSettings_en reports import failures and ENOENT guidance', async () => {
+  const text = await source('GeneralSettings_en.tsx')
+  assert.ok(text.includes('Import failed'))
+  assert.ok(text.includes('File not found'))
+  assert.ok(text.includes('result.errors.some((item) => item.includes'))
+})
+
+test('RoleSettings_en shows an explicit no-fallback empty state', async () => {
+  const text = await source('RoleSettings_en.tsx')
+  assert.ok(text.includes('No fallback models'))
 })

@@ -459,7 +459,7 @@ export function RoleSettingsSection({
               >
                 <IconPlusOutline16 size={14} />
               </button>
-              <span style={STYLE.emptyFallback}>Fallback</span>
+              <span style={STYLE.emptyFallback}>{fallbacks.length === 0 ? 'No fallback models' : 'Fallback'}</span>
             </div>
           </div>
         </div>

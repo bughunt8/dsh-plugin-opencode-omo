@@ -128,10 +128,21 @@ export function apply(ctx: Context): void {
       },
     }, OmoSettingsSection))
 
+    const disposeGeneralTab = ctx.slots.inject('opencode-omo.settings.tab', () => ctx.slots.register({
+      name: 'opencode-omo.settings.tab',
+      id: 'general',
+      order: 0,
+      label: () => 'General',
+      inject: (): GeneralSettingsInjected => ({
+        omoJsonEndpoint: OMO_JSON_ENDPOINT,
+        omoJsonImportEndpoint: OMO_JSON_IMPORT_ENDPOINT,
+      }),
+    }, GeneralSettingsSection))
+
     const disposeSettingsTab = ctx.slots.inject('opencode-omo.settings.tab', () => ctx.slots.register({
       name: 'opencode-omo.settings.tab',
       id: 'roles',
-      order: 0,
+      order: 1,
       label: () => 'Role Settings',
       inject: (): RoleSettingsInjected => ({
         rolesEndpoint: ROLES_ENDPOINT,
@@ -139,17 +150,6 @@ export function apply(ctx: Context): void {
         loadModels,
       }),
     }, RoleSettingsSection))
-
-    const disposeGeneralTab = ctx.slots.inject('opencode-omo.settings.tab', () => ctx.slots.register({
-      name: 'opencode-omo.settings.tab',
-      id: 'general',
-      order: 1,
-      label: () => 'General',
-      inject: (): GeneralSettingsInjected => ({
-        omoJsonEndpoint: OMO_JSON_ENDPOINT,
-        omoJsonImportEndpoint: OMO_JSON_IMPORT_ENDPOINT,
-      }),
-    }, GeneralSettingsSection))
 
     return () => {
       disposeRole()

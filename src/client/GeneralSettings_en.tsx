@@ -104,7 +104,9 @@ async function runImport(endpoint: string, path: string): Promise<ImportResult> 
     body: JSON.stringify({ path }),
   })
   const data = await response.json() as ImportResult & { error?: string }
-  if (!data.ok) throw new Error(data.error ?? `HTTP ${response.status}`)
+  // A transport/HTTP failure throws; an ok:false payload is a RESULT — the
+  // endpoint reports per-role problems inside `errors`, never as a throw.
+  if (!response.ok) throw new Error(data.error ?? `HTTP ${response.status}`)
   return data
 }
 
@@ -209,11 +211,17 @@ export function GeneralSettingsSection({ omoJsonEndpoint, omoJsonImportEndpoint 
 
       {(result !== undefined || error !== undefined) && (
         <div style={STYLE.status}>
+          {result !== undefined && !result.ok && (
+            <div style={STYLE.error}>Import failed</div>
+          )}
           {result !== undefined && result.ok && (
             <div style={STYLE.success}>
               Imported {result.imported} role{result.imported === 1 ? '' : 's'}
               {result.errors.length > 0 ? ` (${result.errors.length} warning${result.errors.length === 1 ? '' : 's'})` : ''}
             </div>
+          )}
+          {result !== undefined && result.errors.some((item) => item.includes('ENOENT')) && (
+            <div style={STYLE.hint}>File not found — create the file or change the location above.</div>
           )}
           {result !== undefined && result.errors.map((item) => (
             <div key={item} style={STYLE.error}>{item}</div>
