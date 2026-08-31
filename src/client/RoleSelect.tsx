@@ -21,7 +21,7 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { OmoModelSelection } from './omo-wire.ts'
-import { loadOmoRoles, postOmoRole } from './omo-wire.ts'
+import { loadOmoRoles, postOmoRole, sessionAgentPreset } from './omo-wire.ts'
 import type { OmoRoleView } from './omo-wire.ts'
 
 /** Injected face delivered by the composer-bar outlet. */
@@ -129,7 +129,7 @@ export function RoleSelect({
   const noticeSeq = useRef(0)
 
   const summary = useSessions?.(state => (sessionId === undefined ? undefined : state.byId[sessionId]))
-  const eligible = summary?.agentPreset === OMO_PRESET
+  const eligible = sessionAgentPreset(summary) === OMO_PRESET
 
   useEffect(() => { installTriggerStyles() }, [])
 

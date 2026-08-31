@@ -78,6 +78,24 @@ export function parseModelKey(key: string): OmoModelSelection | undefined {
   return { provider: key.slice(0, separator), model: key.slice(separator + 2) }
 }
 
+/** Session list row face used to decide whether the composer role chip shows. */
+export interface SessionPresetSummary {
+  readonly agentPreset?: string
+  readonly projectionValues?: { readonly agentPreset?: string | null }
+}
+
+/**
+ * Read the session's agent-preset id. dsh 0.1.2 keeps it on
+ * `projectionValues.agentPreset`; older list rows put it on the summary
+ * itself. Empty / non-string values do not count.
+ */
+export function sessionAgentPreset(summary: SessionPresetSummary | undefined): string | undefined {
+  const projected = summary?.projectionValues?.agentPreset
+  if (typeof projected === 'string' && projected !== '') return projected
+  if (typeof summary?.agentPreset === 'string' && summary.agentPreset !== '') return summary.agentPreset
+  return undefined
+}
+
 /** Ask the host for the role catalog plus one session's current role. */
 export async function loadOmoRoles(
   endpoint: string,
