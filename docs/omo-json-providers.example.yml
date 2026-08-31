@@ -1,0 +1,63 @@
+# Example llm-pi-ai provider configuration for the omo.json import.
+#
+# Copy the `providers` entries below into your DSH config file
+# (~/.dsh/settings.yaml) under the existing `llm-pi-ai:` section, so the
+# models referenced by a real oh-my-openagent omo.json resolve at request
+# time. These four providers are the ones the shipped omo.json example
+# (see the project README) uses beyond the built-in catalog.
+#
+# Every value below is a PLACEHOLDER:
+#   - apiKeyEnv names an environment variable you must set with the real key
+#     (e.g. `export APIYI_API_KEY=...`).
+#   - baseURL uses the reserved .invalid TLD on purpose; replace it with the
+#     real endpoint before use. Requests to a PLACEHOLDER URL fail loudly
+#     instead of silently misrouting.
+#
+# YAML is valid as-is; paste under `llm-pi-ai:` and restart dsh.
+llm-pi-ai:
+  providers:
+    apiyi:
+      displayName: apiyi
+      apiKeyEnv: APIYI_API_KEY
+      api: openai-completions
+      baseURL: https://PLACEHOLDER-apiyi.invalid/v1
+      models:
+        - id: gpt-5.6-sol
+          contextWindow: 1000000
+          maxTokens: 8192
+        - id: gpt-5.6-terra
+          contextWindow: 1000000
+          maxTokens: 8192
+    zai-coding-plan:
+      displayName: zai-coding-plan
+      apiKeyEnv: ZAI_CODING_PLAN_API_KEY
+      api: openai-completions
+      baseURL: https://PLACEHOLDER-zai-coding-plan.invalid/v1
+      models:
+        - id: glm-5.3
+          contextWindow: 1000000
+          maxTokens: 8192
+        - id: glm-5.3-flash
+          contextWindow: 1000000
+          maxTokens: 8192
+    moonshotai:
+      displayName: moonshotai
+      apiKeyEnv: MOONSHOTAI_API_KEY
+      api: openai-completions
+      baseURL: https://PLACEHOLDER-moonshotai.invalid/v1
+      models:
+        - id: kimi-k2.7-code
+          contextWindow: 1000000
+          maxTokens: 8192
+        - id: kimi-k3
+          contextWindow: 1000000
+          maxTokens: 8192
+    minimax:
+      displayName: minimax
+      apiKeyEnv: MINIMAX_API_KEY
+      api: openai-completions
+      baseURL: https://PLACEHOLDER-minimax.invalid/v1
+      models:
+        - id: MiniMax-M3
+          contextWindow: 1000000
+          maxTokens: 8192

@@ -172,3 +172,7 @@ The file is a flat JSON map of role id → config (same shape as the role-config
 ```
 
 A CLI equivalent ships at `scripts/omo.json.apply.mjs`: `node scripts/omo.json.apply.mjs [path] [--host http://127.0.0.1:3080]`. Files over 2 MB are refused unread, and imports never delete existing config — they overwrite only the roles present in the file.
+
+### Providers for the imported models
+
+A real omo.json references pi-ai-style providers (`apiyi`, `zai-coding-plan`, `moonshotai`, `minimax`, …) that the DSH catalog may not know. `docs/omo-json-providers.example.yml` is a copy-paste `llm-pi-ai.providers` snippet for the four providers the shipped example uses, with placeholder `apiKeyEnv` names and `.invalid`-TLD baseURLs that fail loudly until replaced. Paste it under `llm-pi-ai:` in `~/.dsh/settings.yaml`, fill in the real endpoints/keys, and restart dsh.
