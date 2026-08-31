@@ -124,3 +124,96 @@ test('readOmoJsonFile refuses files over the import cap before reading', async (
   await writeFile(file, 'x'.repeat(OMO_JSON_MAX_BYTES + 1))
   await assert.rejects(readOmoJsonFile(file), /import cap/)
 })
+
+// ── real oh-my-openagent omo.json format ─────────────────────────────────
+
+const OMO_FORMAT_SAMPLE = JSON.stringify({
+  $schema: 'https://example/omo.schema.json',
+  '[opencode]': {
+    team_mode: { enabled: true },
+    agents: {
+      oracle: {
+        model: 'apiyi/gpt-5.6-sol',
+        reasoning: 'high',
+        fallback_models: [
+          { model: 'apiyi/gpt-5.6-terra', reasoning: 'high' },
+          { model: 'tokeness/qwen3.7-plus' },
+        ],
+      },
+      hephaestus: {
+        model: 'tokeness/gpt-5.6-luna',
+        reasoning: 'medium',
+        fallback_models: [],
+        ultrawork: { model: 'deepseek/deepseek-v4-pro', reasoning: 'max' },
+        prompt_append: 'ignored text',
+      },
+      bogus: { model: 'x/y' },
+    },
+    categories: {},
+  },
+  _migrations: {},
+  '[codex]': {},
+})
+
+test('omo-format parse reads agents from [opencode].agents and ignores other sections', () => {
+  const result = parseOmoJson(OMO_FORMAT_SAMPLE)
+  assert.equal(result.imported ?? undefined, undefined) // parser-only shape guard
+  assert.ok(result.entries.oracle !== undefined)
+  assert.ok(result.entries.hephaestus !== undefined)
+  assert.ok(result.errors.some((error) => error.includes('bogus')))
+  assert.ok(!result.errors.some((error) => error.includes('$schema') || error.includes('[codex]') || error.includes('_migrations')))
+})
+
+test('omo-format model strings split into provider/model selections', () => {
+  const result = parseOmoJson(OMO_FORMAT_SAMPLE)
+  assert.deepEqual(result.entries.oracle.model, { provider: 'apiyi', model: 'gpt-5.6-sol', reasoningEffort: 'high' })
+  assert.deepEqual(result.entries.oracle.fallbackModels, [
+    { provider: 'apiyi', model: 'gpt-5.6-terra', reasoningEffort: 'high' },
+    { provider: 'tokeness', model: 'qwen3.7-plus' },
+  ])
+})
+
+test('omo-format preserves the official reasoning vocabulary and aliases known providers', () => {
+  const result = parseOmoJson(OMO_FORMAT_SAMPLE)
+  assert.equal(result.entries.hephaestus.model.reasoningEffort, 'medium') // official value preserved
+  assert.deepEqual(result.entries.hephaestus.ultrawork, {
+    model: { provider: 'deepseek-official', model: 'deepseek-v4-pro' },
+    reasoningEffort: 'max',
+  })
+})
+
+test('omo-format accepts string fallback_models shorthand', () => {
+  const result = parseOmoJson(JSON.stringify({
+    '[opencode]': { agents: { explore: { model: 'a/b', fallback_models: ['c/d'] } } },
+  }))
+  assert.deepEqual(result.entries.explore.fallbackModels, [{ provider: 'c', model: 'd' }])
+})
+
+test('omo-format reads the top-level agents section when [opencode] is absent', () => {
+  const result = parseOmoJson(JSON.stringify({
+    $schema: 'x',
+    agents: { momus: { model: 'apiyi/gpt-5.6-terra', reasoning: 'high', fallback_models: [] } },
+  }))
+  assert.deepEqual(result.entries.momus.model, { provider: 'apiyi', model: 'gpt-5.6-terra', reasoningEffort: 'high' })
+})
+
+test('omo-format with a non-object agent entry collects a per-role error', () => {
+  const result = parseOmoJson(JSON.stringify({ '[opencode]': { agents: { oracle: 'nope' } } }))
+  assert.ok(result.errors.some((error) => error.includes('oracle')))
+})
+
+test('omo-format accepts a bare-string fallback_models value', () => {
+  const result = parseOmoJson(JSON.stringify({
+    '[opencode]': { agents: { explore: { model: 'a/b', fallback_models: 'c/d' } } },
+  }))
+  assert.deepEqual(result.entries.explore.fallbackModels, [{ provider: 'c', model: 'd' }])
+})
+
+test('omo-format agent-less official files parse to empty entries without errors', () => {
+  const result = parseOmoJson(JSON.stringify({
+    $schema: 'https://example/omo.schema.json',
+    '[opencode]': { team_mode: { enabled: true } },
+  }))
+  assert.deepEqual(result.entries, {})
+  assert.deepEqual(result.errors, [])
+})
