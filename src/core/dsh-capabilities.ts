@@ -7,6 +7,12 @@
  * The seam has no runtime flag (the patch is structural), so the detector
  * resolves the installed `@deepseek-ai/dsh-agent-loop` entry and checks for
  * the compiled `decision.assistantPrefill` marker. It is read once per process.
+ *
+ * Fork note (rc.2 line): the detection logic below is identical to upstream
+ * b11d05a (resolve the agent-loop entry, then `includes('assistantPrefill')`);
+ * only the warning strings diverge — upstream 0.1.2 wording treats the seam
+ * as a default path ("no local patch needed"), while this rc.2 wording still
+ * points at patches/0001-agent-pre-step-assistant-prefill.patch.
  */
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'

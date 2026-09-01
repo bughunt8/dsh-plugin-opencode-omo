@@ -6,8 +6,9 @@
  * location (default ~/.omo/omo.json), and a Re-Import button that applies
  * the file into the running host registry.
  *
- * Dark-theme contract: dark-gray surfaces (#212121/#2e2e2e/#3f3f3f) and
- * white/light wording (#ffffff/#e6e6e6/#b3b3b3) — no light-theme literals.
+ * Theme contract: colors use the shared dsw design tokens
+ * (`var(--dsw-alias-*` / `var(--dsw-surface)`) so the English tab honors
+ * the host theme and light mode; status colors stay as literals.
  */
 import { useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
@@ -31,43 +32,43 @@ interface ImportResult {
 }
 
 const STYLE: Record<string, React.CSSProperties> = {
-  root: { display: 'flex', flexDirection: 'column', gap: 14, fontSize: 13, color: '#ffffff' },
+  root: { display: 'flex', flexDirection: 'column', gap: 14, fontSize: 13, color: 'var(--dsw-alias-label-primary, #333)' },
   row: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
-  label: { color: '#ffffff', fontSize: 13, fontWeight: 500 },
-  hint: { color: '#b3b3b3', fontSize: 11, lineHeight: 1.5 },
+  label: { color: 'var(--dsw-alias-label-primary, #333)', fontSize: 13, fontWeight: 500 },
+  hint: { color: 'var(--dsw-alias-label-caption, #909090)', fontSize: 11, lineHeight: 1.5 },
   toggle: {
     display: 'inline-flex',
     alignItems: 'center',
     gap: 8,
     padding: '4px 14px',
-    border: '1px solid #3f3f3f',
+    border: '1px solid var(--dsw-alias-border, #e0e0e0)',
     borderRadius: 999,
-    background: '#2e2e2e',
-    color: '#ffffff',
+    background: 'var(--dsw-surface, #fff)',
+    color: 'var(--dsw-alias-label-primary, #333)',
     fontSize: 12,
     fontWeight: 500,
     cursor: 'pointer',
   },
-  toggleOn: { borderColor: '#ffffff', background: '#3f3f3f' },
+  toggleOn: { borderColor: 'var(--dsw-alias-label-primary, #333)', background: 'var(--dsw-alias-interactive-bg-hover, #f0f0f0)' },
   input: {
     boxSizing: 'border-box',
     width: '100%',
     height: 28,
     padding: '0 8px',
-    border: '1px solid #3f3f3f',
+    border: '1px solid var(--dsw-alias-border, #e0e0e0)',
     borderRadius: 6,
-    background: '#212121',
-    color: '#ffffff',
+    background: 'var(--dsw-surface, #fff)',
+    color: 'var(--dsw-alias-label-primary, #333)',
     fontSize: 12,
     outline: 'none',
   },
   importButton: {
     alignSelf: 'flex-start',
     padding: '6px 14px',
-    border: '1px solid #3f3f3f',
+    border: '1px solid var(--dsw-alias-border, #e0e0e0)',
     borderRadius: 8,
-    background: '#2e2e2e',
-    color: '#ffffff',
+    background: 'var(--dsw-surface, #fff)',
+    color: 'var(--dsw-alias-label-primary, #333)',
     fontSize: 12,
     fontWeight: 500,
     cursor: 'pointer',

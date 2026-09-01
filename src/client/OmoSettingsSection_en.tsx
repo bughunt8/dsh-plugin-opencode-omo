@@ -25,23 +25,23 @@ const TABS: ReadonlyArray<{ id: TabId; label: string }> = [
 ]
 
 const STYLE: Record<string, React.CSSProperties> = {
-  section: { display: 'flex', flexDirection: 'column', gap: 12, fontSize: 13, color: '#ffffff' },
+  section: { display: 'flex', flexDirection: 'column', gap: 12, fontSize: 13, color: 'var(--dsw-alias-label-primary, #333)' },
   heading: { margin: 0, fontSize: 18, fontWeight: 600, lineHeight: 1.3 },
-  intro: { margin: 0, color: '#e6e6e6', fontSize: 12, lineHeight: 1.6 },
-  tabs: { display: 'flex', alignItems: 'center', gap: 4, borderBottom: '1px solid #3f3f3f' },
+  intro: { margin: 0, color: 'var(--dsw-alias-label-secondary, #616161)', fontSize: 12, lineHeight: 1.6 },
+  tabs: { display: 'flex', alignItems: 'center', gap: 4, borderBottom: '1px solid var(--dsw-alias-border, #e0e0e0)' },
   tab: {
     padding: '8px 10px',
     border: 'none',
     borderBottom: '2px solid transparent',
     background: 'transparent',
-    color: '#e6e6e6',
+    color: 'var(--dsw-alias-label-secondary, #616161)',
     fontSize: 13,
     fontWeight: 500,
     cursor: 'pointer',
   },
   tabActive: {
-    borderBottomColor: '#ffffff',
-    color: '#ffffff',
+    borderBottomColor: 'var(--dsw-alias-label-primary, #333)',
+    color: 'var(--dsw-alias-label-primary, #333)',
   },
 }
 
