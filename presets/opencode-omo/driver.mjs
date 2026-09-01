@@ -14,10 +14,17 @@
 //   assistant-role prefill only if a leftover local seam is still present).
 // - `agent/request` / `agent/request-error` route through the role's primary
 //   model and advance the fallback chain, exactly like the previous subclass.
+// - Named specialist / task() children pin an omo role and keep this complete
+//   section (no static persona overlay), so they see `<env>` + the specialist
+//   body instead of the dsh harness identity.
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
+import { applyOmoDelegationCatalog } from './delegation-surface.mjs'
+import { applyOmoLspCatalog } from './lsp-surface.mjs'
 import { renderRulesFor } from './rules.mjs'
+import { roleForDelegationCall } from './task-shim.mjs'
 
 export const name = 'opencode-omo-loop'
 
@@ -25,6 +32,9 @@ export const inject = ['systemPrompt', 'tools']
 
 const PERSONA_SECTION = 'deployment:persona'
 const PERSONA_ORDER = 0
+
+/** Role to pin on a child created inside the current named-tool / task() call. */
+const pendingChildRole = new AsyncLocalStorage()
 
 const PROMPT_DIR = new URL('roles/prompts/', import.meta.url)
 const LEGACY_PROMPT_DIR = new URL('roles/', import.meta.url)
@@ -161,17 +171,22 @@ function promptFile(dir, file) {
 function familyFileFor(model) {
   const id = String(model ?? '').toLowerCase()
   if (id.includes('kimi-k3')) return 'family/kimi-k3.md'
-  if (id.includes('kimi-k2.7')) return 'variants/sisyphus/kimi-k2-7.md'
+  if (id.includes('kimi-k2.7') || id.includes('kimi-k2-7')) return 'variants/sisyphus/kimi-k2-7.md'
   if (id.includes('kimi-k2') || id.includes('kimi')) return 'variants/sisyphus/kimi-k2-6.md'
+  if (id.includes('gpt-5.6') || id.includes('gpt-5-6') || id.includes('gpt-5.5') || id.includes('gpt-5-5')) {
+    return 'family/gpt-5-5.md'
+  }
+  if (id.includes('gpt-5.4') || id.includes('gpt-5-4') || id.includes('gpt')) return 'family/gpt-5-4.md'
   if (id.includes('claude-fable-5')) return 'variants/sisyphus/claude-fable-5.md'
-  if (id.includes('claude-opus-4-8')) return 'variants/sisyphus/claude-opus-4-8.md'
+  if (id.includes('claude-opus-5') || id.includes('opus-5')) return 'family/claude-opus-5.md'
+  if (id.includes('claude-opus-4-8') || id.includes('claude-opus-4.8') || id.includes('opus-4-8') || id.includes('opus-4.8')) {
+    return 'variants/sisyphus/claude-opus-4-8.md'
+  }
   if (id.includes('claude') || id.includes('anthropic')) return 'family/claude-opus-4-7.md'
-  if (id.includes('gpt-5.6') || id.includes('gpt-5.5')) return 'family/gpt-5-5.md'
-  if (id.includes('gpt-5.4') || id.includes('gpt')) return 'family/gpt-5-4.md'
   if (id.includes('gemini')) return 'family/gemini.md'
   if (id.includes('glm')) return 'family/glm-5-2.md'
-  // omo's own fallback family: the dynamic Sisyphus prompt built from the
-  // live section builders (role/intent, exploration, execution, style).
+  if (id.includes('grok')) return 'family/grok-4.md'
+  // omo resolveSisyphusPromptFamily "fallback" (v5.0.0-beta.31).
   return 'family/fallback.md'
 }
 
@@ -280,6 +295,8 @@ function familySection(expr, tools) {
     case 'parallelDelegationSection':
       return 'Dispatch independent delegations in parallel; serialize only when a later prompt needs an earlier result.'
     case 'taskManagementSection': return taskSystemGuideMarkdown()
+    case 'tasksSection': return taskSystemGuideMarkdown()
+    case 'todoDiscipline': return taskSystemGuideMarkdown()
     case 'hardBlocks': return hardBlocksMarkdown()
     case 'antiPatterns': return antiPatternsMarkdown()
     case 'browserQaInstruction':
@@ -300,6 +317,7 @@ function renderFamilyPrompt(template, tools) {
   const hasToolTable = template.includes('${toolSelection}') || template.includes('{{ toolSelection }}')
   let body = template
     .replaceAll('{{ personality }}', '')
+    .replaceAll('{{ modelIdentity }}', 'GPT-5.5 / GPT-5.6')
     .replaceAll('{{ keyTriggers }}', keyTriggersMarkdown())
     .replaceAll('{{ delegationTable }}', delegationTableMarkdown())
     .replaceAll('{{ categorySkillsGuide }}', skillsGuideMarkdown())
@@ -335,41 +353,66 @@ const LEGACY_ROLE_PROMPT_FILES = {
   'multimodal-looker': 'looker.md',
 }
 
+/** Last path segment of a `provider/model` id, matching omo `extractModelName`. */
+function modelTail(model) {
+  const id = String(model ?? '').toLowerCase()
+  return id.includes('/') ? id.split('/').pop() : id
+}
+
 /** omo agent factories choose these variant files by model family. */
 function hephaestusVariantFile(model) {
-  const id = String(model ?? '').toLowerCase()
-  if (id.includes('gpt-5.6')) return 'hephaestus/gpt-5-6.md'
-  if (id.includes('gpt-5.5')) return 'hephaestus/gpt-5-5.md'
-  if (id.includes('gpt-5.4')) return 'hephaestus/gpt-5-4.md'
-  if (id.includes('gpt')) return 'hephaestus/gpt.md'
+  const name = modelTail(model)
+  if (name.includes('gpt-5.6') || name.includes('gpt-5-6')) return 'hephaestus/gpt-5-6.md'
+  if (name.includes('gpt-5.5') || name.includes('gpt-5-5')) return 'hephaestus/gpt-5-5.md'
+  if (name.includes('gpt-5.4') || name.includes('gpt-5-4')) return 'hephaestus/gpt-5-4.md'
+  if (name.includes('gpt')) return 'hephaestus/gpt.md'
   return undefined
 }
 
+/** omo `atlasPromptVariants` key order + `resolveVariant` matchers. */
 function atlasVariantFile(model) {
-  const id = String(model ?? '').toLowerCase()
-  if (id.includes('claude-opus-4-7') || id.includes('claude')) return 'atlas/opus-4-7.md'
-  if (id.includes('gpt') || id.includes('o1') || id.includes('o3')) return 'atlas/gpt.md'
-  if (id.includes('gemini')) return 'atlas/gemini.md'
-  if (id.includes('glm')) return 'atlas/glm.md'
-  if (id.includes('kimi-k3')) return 'atlas/kimi-k3.md'
-  if (id.includes('kimi-k2.7')) return 'atlas/kimi-k2-7.md'
-  if (id.includes('kimi')) return 'atlas/kimi.md'
+  if (model == null || model === '') return 'atlas/default.md'
+  const id = String(model).toLowerCase()
+  const name = modelTail(model)
+  const dashed = name.replaceAll('.', '-')
+  if (dashed.includes('claude-opus-4-7')) return 'atlas/opus-4-7.md'
+  if (name.includes('gpt')) return 'atlas/gpt.md'
+  if (
+    id.startsWith('google/') ||
+    id.startsWith('google-vertex/') ||
+    name.startsWith('gemini-') ||
+    (id.startsWith('github-copilot/') && name.startsWith('gemini'))
+  ) {
+    return 'atlas/gemini.md'
+  }
+  if (/kimi-k3/.test(name) || /k3[-.]?p?\d*$/.test(name)) return 'atlas/kimi-k3.md'
+  if (/kimi-k2[.\-]?7/.test(name) || /k2[-.]?p7/.test(name)) return 'atlas/kimi-k2-7.md'
+  if (name.includes('kimi') || /k2[-.]?p[567]/.test(name)) return 'atlas/kimi.md'
+  if (name.includes('glm')) return 'atlas/glm.md'
   return 'atlas/default.md'
 }
 
 function specialistVariantFile(role, model) {
-  const id = String(model ?? '').toLowerCase()
+  const name = modelTail(model)
   if (role === 'oracle') {
-    if (id.includes('gpt-5.5') || id.includes('gpt-5.6')) return 'specialists/oracle-gpt-5-5.md'
-    if (id.includes('gpt')) return 'specialists/oracle-gpt.md'
+    if (
+      name.includes('gpt-5.5') ||
+      name.includes('gpt-5-5') ||
+      name.includes('gpt-5.6') ||
+      name.includes('gpt-5-6')
+    ) {
+      return 'specialists/oracle-gpt-5-5.md'
+    }
+    if (name.includes('gpt')) return 'specialists/oracle-gpt.md'
     return 'specialists/oracle-default.md'
   }
   if (role === 'metis') {
-    return id.includes('kimi-k2.7') ? 'specialists/metis-kimi-k2-7.md' : 'specialists/metis-default.md'
+    const kimi27 = /kimi-k2[.\-]?7/.test(name) || /k2[-.]?p7/.test(name)
+    return kimi27 ? 'specialists/metis-kimi-k2-7.md' : 'specialists/metis-default.md'
   }
   if (role === 'momus') {
-    if (id.includes('gpt-5.6')) return 'specialists/momus-gpt-5-6.md'
-    if (id.includes('gpt')) return 'specialists/momus-gpt.md'
+    if (name.includes('gpt-5.6') || name.includes('gpt-5-6')) return 'specialists/momus-gpt-5-6.md'
+    if (name.includes('gpt')) return 'specialists/momus-gpt.md'
     return 'specialists/momus-default.md'
   }
   if (role === 'librarian') return 'specialists/librarian.md'
@@ -381,8 +424,8 @@ function specialistVariantFile(role, model) {
 /** Simplified dsh-tool-facing sections substituted into the atlas variant files. */
 function renderAtlasVariant(template, tools) {
   const categorySection = [
-    '##### Option A: Use named subagent tools (dsh surface)',
-    'This dsh mode has no `task(category=...)` categories; dispatch specialists with the named tools below.',
+    '##### Option A: Use `task(category=...)` / `call_omo_agent(...)`',
+    'Dispatch implementation or QA units with `task(category="...", prompt=..., run_in_background=false)`. Known categories: visual-engineering, deep, ultrabrain, quick, writing, git.',
   ].join('\n')
   const agentSection = [
     '##### Option B: Use a specialist directly',
@@ -390,13 +433,14 @@ function renderAtlasVariant(template, tools) {
   ].join('\n')
   const decisionMatrix = [
     '##### Decision Matrix',
-    '- Internal codebase search → `explore` (parallel 1-3).',
-    '- External docs/OSS → `librarian`.',
-    '- Architecture/hard debugging → `oracle`.',
+    '- Internal codebase search → `explore` or `task(subagent_type="explore")` (parallel 1-3, `run_in_background=true`).',
+    '- External docs/OSS → `librarian` or `task(subagent_type="librarian")`.',
+    '- Architecture/hard debugging → `oracle` or `task(subagent_type="oracle")`.',
     '- Plan analysis/review → `metis` / `momus`.',
     '- Media → `multimodal-looker`.',
-    '- Independent implementation units → `subagent` / `subagent_fork`; many workers → `workflow` / `ralph`.',
-    'Never provide both a named specialist and a generic subagent for the same unit.',
+    '- Independent implementation units → `task(category=...)`; many workers → `workflow` / `ralph`.',
+    '- Collect background ids with `background_output(task_id="bg_...")` after a completion notice; follow up with `task(task_id="ses_...")`.',
+    'Never provide both a named specialist and a generic task for the same unit.',
   ].join('\n')
   const skillsSection = skillsGuideMarkdown()
   void tools
@@ -481,7 +525,8 @@ Any attempt to use tools is a critical violation. Respond with text ONLY.`
 
 /** Delegatable roles and when the orchestrator should use them. */
 const DELEGATION_TABLE = [
-  ['subagent / subagent_fork', '任何独立、自包含的实现/分析单元；fork 用于需要看到当前会话的子任务'],
+  ['task / call_omo_agent', '任何独立、自包含的实现/分析单元；category 或 subagent_type 选角色，task_id=ses_... 续跑'],
+  ['plan', '两步以上工作先咨询的 Plan Agent（Prometheus / ulw-plan），只写 .omo/ 计划，不实现'],
   ['workflow / ralph', '跨多个 worker 的流水线 / 多轮 fresh-agent 迭代'],
   ['oracle', '复杂架构、重大实现后自审、两次失败后的疑难调试'],
   ['librarian', '外部库文档与开源实现检索'],
@@ -493,6 +538,7 @@ const DELEGATION_TABLE = [
   ['atlas', '按计划自动执行并验证全部任务'],
   ['sisyphus-junior', '单一、边界清晰的轻量实现任务'],
   ['sisyphus', '完整的 Sisyphus 编排子树（递归委派已由 toolFilter 关闭）'],
+  ['athena / athena-junior / council-member', '委员会多视角评审与裁决'],
 ]
 
 /** Key triggers mirroring omo's Phase-0 routing hints. */
@@ -504,6 +550,7 @@ const KEY_TRIGGERS = [
   'PDF/图片/图表解读 → multimodal-looker',
   '前端/UI/UX 工作 → 加载 frontend skill，按规则执行',
   '计划编写 → 加载 ulw-plan skill，并以 Prometheus 规则工作',
+  '多视角评审 → athena / athena-junior / council-member，或 task(subagent_type="athena")',
 ]
 
 /** truncate long tool descriptions so the table stays compact. */
@@ -514,9 +561,9 @@ function clipped(text, max = 180) {
 
 /** Categorize tools the way omo's prompt labels cost. */
 function toolCost(name) {
-  if (['subagent', 'subagent_fork', 'workflow', 'ralph', 'web_search', 'web_fetch'].includes(name)) return 'EXPENSIVE'
-  if (['oracle', 'hephaestus', 'atlas', 'sisyphus', 'sisyphus-junior', 'librarian', 'explore', 'metis', 'momus', 'multimodal-looker'].includes(name)) return 'EXPENSIVE'
-  if (['read', 'read_image', 'glob', 'grep', 'todo_write', 'skill', 'ask_user_question', 'list_agents'].includes(name)) return 'FREE'
+  if (['task', 'call_omo_agent', 'workflow', 'ralph', 'web_search', 'web_fetch'].includes(name)) return 'EXPENSIVE'
+  if (['plan', 'oracle', 'hephaestus', 'atlas', 'sisyphus', 'sisyphus-junior', 'librarian', 'explore', 'metis', 'momus', 'multimodal-looker', 'athena', 'athena-junior', 'council-member'].includes(name)) return 'EXPENSIVE'
+  if (['read', 'read_image', 'glob', 'grep', 'todo_write', 'skill', 'ask_user_question', 'background_output', 'background_cancel', 'lsp_goto_definition', 'lsp_find_references', 'lsp_hover', 'lsp_diagnostics', 'lsp_rename', 'lsp_symbols', 'lsp_status'].includes(name)) return 'FREE'
   return 'CHEAP'
 }
 
@@ -567,6 +614,11 @@ function dynamicSisyphusSections(tools, model) {
     '- The available skill catalog arrives as a <system-reminder> before this step; load `frontend` for UI work, `ulw-plan` for planning, and other skills when their description matches.',
     '',
     'Fan out independent work in parallel. Every delegation prompt must be complete and standalone; verify specialist output before acting on it.',
+    '',
+    '### This harness (names that family prompts may still mention)',
+    '- LSP is mounted. Call `lsp_goto_definition` / `lsp_find_references` / `lsp_hover` / `lsp_go_to_implementation`. `lsp_diagnostics` / `lsp_rename` / `lsp_symbols` exist as names and tell you the fallback (typecheck via bash; find-refs + edit). There is no raw `lsp` tool.',
+    '- Session plan mode uses `exit_plan_mode`. `task(subagent_type="plan")` / `plan()` spawn Prometheus to write `.omo/` plans — they are not the same gate.',
+    '- No `team_*`, `interactive_bash`, or `codegraph_*`. Parallel `task()` / `workflow` / `ralph` stand in for teams; persistent `bash` stands in for a TUI; grep + LSP stand in for a code graph.',
   ].join('\n')
 }
 
@@ -583,7 +635,7 @@ function opencodeUsesPatch(model) {
 
 function opencodeTools(tools, model) {
   const usePatch = opencodeUsesPatch(model)
-  return tools.filter(tool => {
+  return applyOmoLspCatalog(applyOmoDelegationCatalog(tools)).filter(tool => {
     if (tool.name === 'apply_patch') return usePatch
     if (tool.name === 'edit' || tool.name === 'write') return !usePatch
     return true
@@ -602,7 +654,7 @@ function gateToolCall(name, model) {
   return undefined
 }
 
-export { gateToolCall, opencodeUsesPatch }
+export { atlasVariantFile, familyFileFor, gateToolCall, hephaestusVariantFile, opencodeUsesPatch, specialistVariantFile }
 
 // Mirrors opencode's ctx.project.vcs === "git" check: walk up from the session
 // cwd looking for a .git entry (handles worktrees/submodules whose .git is a
@@ -639,43 +691,12 @@ function omoEnvBlock(session, provider, model) {
   ].join('\n')
 }
 
-// The harness communicates the file-sandbox mode and approval policy through
-// systemPrompt.context contributions (dsh-sandbox-policy's `sandbox:policy`
-// and dsh-user-approval's `approval:policy`), which this preset's
-// suppressRuntimeContext() drops. Re-render the same facts here so the model
-// knows the boundary it runs under and the sanctioned escalation path. The
-// policy sentences mirror dsh-sandbox-policy's renderPolicyContext wording —
-// reconcile these strings when dsh changes theirs. Both services are read
-// through public APIs (sandboxPolicy.resolve / approval.overrideOf + config).
-function omoPolicyBlock(ctx, session) {
-  if (typeof ctx.get !== 'function') return undefined
-  const sandboxPolicy = ctx.get('sandboxPolicy')
-  if (sandboxPolicy === undefined || sandboxPolicy === null) return undefined
-  let policy
-  try {
-    policy = sandboxPolicy.resolve({ session })
-  } catch {
-    return undefined
-  }
-  const approval = ctx.get('approval')
-  const approvalPolicy = approval === undefined || approval === null
-    ? 'ask'
-    : (approval.overrideOf?.(session) ?? approval.config?.policy ?? 'ask')
-  const lines = []
-  if (policy.mode === 'workspace-write') {
-    lines.push('Current DSH file policy: workspace-write. Operations enforced by the DSH file sandbox may modify files under the session workspace: '
-      + JSON.stringify(policy.workspaceRoot)
-      + '. Reads are unrestricted, and some platform temporary areas may also be writable. The persistent bash shell runs inside this sandbox: a file write outside the workspace fails with a "Read-only file system" error — a policy denial, not a command bug. Follow the bash tool\'s `sandbox_permissions` escalation guidance when that happens, and prefer the read/write/edit file tools for out-of-workspace file access (they raise the same user-approval prompt automatically). Never use sudo: privilege escalation is blocked in this environment.')
-  } else if (policy.mode === 'read-only') {
-    lines.push('Current DSH file policy: read-only. Operations enforced by the DSH file sandbox cannot modify files in the standing mode. Do not refuse a required modification from this policy alone: try an available tool normally and follow any denial and escalation guidance it returns.')
-  } else if (policy.mode === 'danger-full-access') {
-    lines.push('Current DSH file policy: danger-full-access. The DSH file sandbox does not restrict file modifications by available operations.')
-  }
-  if (approvalPolicy === 'never') {
-    lines.push('Approval prompts are disabled in this session: a sandbox denial is final — do not set `sandbox_permissions`.')
-  }
-  return lines.length === 0 ? undefined : lines.join('\n')
-}
+// Sandbox mode and approval policy stay enforced by dsh services, the
+// permission-rules hook, and the bash tool description. They are not
+// restated in the complete prompt: native omo has no "Current DSH file
+// policy" / "Approval prompts are disabled" paragraph, and this preset
+// already suppressRuntimeContext() so those facts must not re-enter as
+// omo system-prompt prose.
 
 /** Flatten one inbox message's text for ultrawork detection. */
 function messageText(message) {
@@ -736,7 +757,6 @@ function renderOmoPrompt(ctx, omoRoles, state, agent, provider, model) {
     : roleSystem ?? personaText()
   const buildSwitch = buildSwitchFor(session)
   const plan = activePlanPrompt(session)
-  const policyBlock = omoPolicyBlock(ctx, session)
   // Patchless maxSteps degradation rides the system prompt (see
   // maxStepsSectionFor); on a patched harness the pre-step listener injects
   // the same text as an assistant continuation instead.
@@ -749,9 +769,7 @@ function renderOmoPrompt(ctx, omoRoles, state, agent, provider, model) {
     ...(dynamic === '' ? [] : [dynamic]),
     renderRulesFor(session.header.cwd),
   ].filter(part => part !== '').join('\n\n')
-  return omoEnvBlock(session, provider, model)
-    + (policyBlock === undefined ? '' : '\n' + policyBlock)
-    + '\n' + body
+  return omoEnvBlock(session, provider, model) + '\n' + body
 }
 
 /**
@@ -1129,5 +1147,21 @@ export function apply(ctx) {
 
   ctx.on('agent/disposed', ({ agent }) => {
     states.delete(agent.session.id)
+  })
+
+  // Named specialist tools and task() spawn children without a static
+  // persona overlay (that would shadow complete:true and restore the dsh
+  // harness identity). Pin the child's omo role before the first assembly
+  // so renderOmoPrompt emits `<env>` + the specialist body.
+  ctx.on('tools/execute', async (exec, next) => {
+    const role = roleForDelegationCall(exec.name, exec.arguments)
+    if (role === undefined) return next()
+    return pendingChildRole.run(role, () => next())
+  })
+  ctx.on('agent/created', ({ agent }) => {
+    if (agent?.session?.header?.origin !== 'subagent') return
+    const role = pendingChildRole.getStore()
+    if (role === undefined || typeof omoRoles?.pinRole !== 'function') return
+    omoRoles.pinRole(agent.session.id, role)
   })
 }

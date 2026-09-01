@@ -5,16 +5,18 @@
 //
 // Routing:
 //   task_id        -> continuable follow-up (`ctx.subagents.followup`)
-//   subagent_type  -> one-shot start with the SAME persona + toolFilter used by
-//                     the matching named row in agent.cordis.yml
-//   category       -> generic subagent with a small category persona note
-//   neither        -> generic subagent
+//   subagent_type  -> start with the SAME toolFilter as the matching named
+//                     row; the child prompt is the driver's complete
+//                     `<env>` + specialist body (no static persona overlay)
+//   category       -> generic subagent with a small category note in the
+//                     user prompt; role pinned to sisyphus
+//   neither        -> generic subagent, same sisyphus pin
 //
 // `load_skills` has no dsh equivalent; the shim prepends a
 // `<loaded_skills>` instruction block to the child prompt instead.
 
-import { readFileSync } from 'node:fs'
 import { defineTool } from '@deepseek-ai/dsh-tools'
+import { fromOmoTaskId, toBackgroundTaskId, toSessionTaskId } from './delegation-surface.mjs'
 
 export const name = 'opencode-omo-task-shim'
 export const inject = ['tools', 'subagents', 'jobs']
@@ -24,12 +26,16 @@ const PROVIDER = 'spawn'
 
 /** Known named rows from agent.cordis.yml, in the order they appear there. */
 export const KNOWN_SUBAGENT_TYPES = [
+  'plan',
   'oracle',
   'librarian',
   'explore',
   'metis',
   'momus',
   'multimodal-looker',
+  'athena',
+  'athena-junior',
+  'council-member',
   'sisyphus',
   'hephaestus',
   'atlas',
@@ -56,28 +62,53 @@ const DENY_SPECIALISTS = [
   'write',
   'edit',
   'task',
+  'call_omo_agent',
   'subagent',
   'subagent_fork',
+  'plan',
   'oracle',
   'librarian',
   'explore',
   'metis',
   'momus',
   'multimodal-looker',
+  'athena',
+  'athena-junior',
+  'council-member',
   'workflow',
   'ralph',
 ]
 
 const DENY_PRIMARY = [
   'task',
+  'call_omo_agent',
   'subagent',
   'subagent_fork',
+  'plan',
   'oracle',
   'librarian',
   'explore',
   'metis',
   'momus',
   'multimodal-looker',
+  'athena',
+  'athena-junior',
+  'council-member',
+  'sisyphus',
+  'hephaestus',
+  'atlas',
+  'sisyphus-junior',
+  'workflow',
+  'ralph',
+]
+
+/** Prometheus planner: write `.omo/` artifacts and research, never implement. */
+const DENY_PLAN = [
+  'task',
+  'call_omo_agent',
+  'subagent',
+  'subagent_fork',
+  'plan',
   'sisyphus',
   'hephaestus',
   'atlas',
@@ -87,50 +118,99 @@ const DENY_PRIMARY = [
 ]
 
 /**
- * Named-row mapping: persona file path (relative to this module) and the exact
- * toolFilter that row configures in agent.cordis.yml.
+ * Named-row mapping: omo role id (driver prompt routing) and the exact
+ * toolFilter that row configures in agent.cordis.yml. `plan` is the tool
+ * name; its role is Prometheus.
  */
+export const SUBAGENT_TYPE_TO_ROLE = {
+  plan: 'prometheus',
+  oracle: 'oracle',
+  librarian: 'librarian',
+  explore: 'explore',
+  metis: 'metis',
+  momus: 'momus',
+  'multimodal-looker': 'multimodal-looker',
+  athena: 'athena',
+  'athena-junior': 'athena-junior',
+  'council-member': 'council-member',
+  sisyphus: 'sisyphus',
+  hephaestus: 'hephaestus',
+  atlas: 'atlas',
+  'sisyphus-junior': 'sisyphus-junior',
+}
+
 export const SUBAGENT_TYPE_DEFS = {
+  plan: {
+    role: 'prometheus',
+    toolFilter: { deny: DENY_PLAN },
+  },
   oracle: {
-    persona: 'roles/prompts/variants/specialists/oracle-default.md',
+    role: 'oracle',
     toolFilter: { deny: DENY_SPECIALISTS },
   },
   librarian: {
-    persona: 'roles/prompts/variants/rendered/librarian.md',
+    role: 'librarian',
     toolFilter: { deny: DENY_SPECIALISTS },
   },
   explore: {
-    persona: 'roles/prompts/variants/specialists/explore.md',
+    role: 'explore',
     toolFilter: { deny: DENY_SPECIALISTS },
   },
   metis: {
-    persona: 'roles/prompts/variants/rendered/metis-default.md',
+    role: 'metis',
     toolFilter: { deny: DENY_SPECIALISTS },
   },
   momus: {
-    persona: 'roles/prompts/variants/specialists/momus-default.md',
+    role: 'momus',
     toolFilter: { deny: DENY_SPECIALISTS },
   },
   'multimodal-looker': {
-    persona: 'roles/prompts/variants/specialists/multimodal-looker.md',
+    role: 'multimodal-looker',
     toolFilter: { allow: ['read', 'read_image'] },
   },
+  athena: {
+    role: 'athena',
+    toolFilter: { deny: DENY_SPECIALISTS },
+  },
+  'athena-junior': {
+    role: 'athena-junior',
+    toolFilter: { deny: DENY_SPECIALISTS },
+  },
+  'council-member': {
+    role: 'council-member',
+    toolFilter: { deny: DENY_SPECIALISTS },
+  },
   sisyphus: {
-    persona: 'persona.md',
+    role: 'sisyphus',
     toolFilter: { deny: DENY_PRIMARY },
   },
   hephaestus: {
-    persona: 'roles/prompts/hephaestus.md',
+    role: 'hephaestus',
     toolFilter: { deny: DENY_PRIMARY },
   },
   atlas: {
-    persona: 'roles/prompts/atlas.md',
+    role: 'atlas',
     toolFilter: { deny: DENY_PRIMARY },
   },
   'sisyphus-junior': {
-    persona: 'roles/prompts/sisyphus-junior.md',
+    role: 'sisyphus-junior',
     toolFilter: { deny: DENY_PRIMARY },
   },
+}
+
+/**
+ * Role the driver should pin on a freshly spawned child. Follow-ups leave
+ * the existing pin alone. Named specialist tools map 1:1; `plan` is
+ * Prometheus; generic `task` / `call_omo_agent` workers are Sisyphus.
+ */
+export function roleForDelegationCall(name, args = {}) {
+  if (name === 'task' || name === 'call_omo_agent') {
+    if (typeof args.task_id === 'string' && args.task_id.length > 0) return undefined
+    const type = args.subagent_type
+    if (typeof type === 'string' && type.length > 0) return SUBAGENT_TYPE_TO_ROLE[type]
+    return 'sisyphus'
+  }
+  return SUBAGENT_TYPE_TO_ROLE[name]
 }
 
 /**
@@ -151,18 +231,6 @@ export const CATEGORY_PERSONA_NOTES = {
     'This is a writing task. Prioritize clarity, structure, and reader value; produce prose or documentation rather than code.',
   git:
     'This is a git task. Never amend commits or force-push unless explicitly asked, and never use destructive git commands unless asked.',
-}
-
-const personaCache = new Map()
-
-function personaText(subagentType) {
-  const def = SUBAGENT_TYPE_DEFS[subagentType]
-  if (def === undefined) return undefined
-  const cached = personaCache.get(subagentType)
-  if (cached !== undefined) return cached
-  const text = readFileSync(new URL(def.persona, import.meta.url), 'utf8')
-  personaCache.set(subagentType, text)
-  return text
 }
 
 /**
@@ -187,7 +255,13 @@ export function renderLoadedSkills(loadSkills) {
  */
 export function resolveTaskRoute(args = {}) {
   if (typeof args.task_id === 'string' && args.task_id.length > 0) {
-    return { kind: 'followup', taskId: args.task_id }
+    const parsed = fromOmoTaskId(args.task_id)
+    if (parsed.kind === 'background') {
+      throw new Error(
+        `"${args.task_id}" is a background collection id; use background_output(task_id=...) to collect, not task()`,
+      )
+    }
+    return { kind: 'followup', taskId: parsed.id }
   }
   if (typeof args.subagent_type === 'string' && args.subagent_type.length > 0) {
     if (!KNOWN_SUBAGENT_TYPES.includes(args.subagent_type)) {
@@ -353,7 +427,7 @@ async function startBackground(ctx, request, label, parent, exec) {
       request: continuableRequest,
       signal: exec.signal,
     })
-    return { kind: 'continuable', subagentId: started.childId }
+    return { kind: 'continuable', subagentId: toSessionTaskId(started.childId) }
   }
 
   const jobs = ctx.jobs
@@ -375,7 +449,7 @@ async function startBackground(ctx, request, label, parent, exec) {
       }
     },
   })
-  return { kind: 'background', jobId: id }
+  return { kind: 'background', jobId: toBackgroundTaskId(id) }
 }
 
 /** Deliver a follow-up to an existing continuable child. */
@@ -392,133 +466,148 @@ async function followup(ctx, args, taskId, parent, exec) {
     [{ type: 'text', text: promptText }],
     { source: { kind: 'user' }, signal: exec.signal },
   )
-  return { kind: 'continuable', subagentId: taskId }
+  return { kind: 'continuable', subagentId: toSessionTaskId(taskId) }
+}
+
+const TASK_PARAMETERS = {
+  description: {
+    type: 'string',
+    description: 'A short (3-5 word) description of the delegated task; becomes the subagent label.',
+  },
+  prompt: {
+    type: 'string',
+    required: true,
+    description:
+      'The complete, self-contained task for the child. The child does not share this '
+      + 'conversation, so include everything it needs.',
+  },
+  category: {
+    type: 'string',
+    description:
+      'Optional omo task category. Known: visual-engineering, deep, ultrabrain, quick, writing, git.',
+  },
+  subagent_type: {
+    type: 'string',
+    description:
+      'Optional named specialist. Known: plan, oracle, librarian, explore, metis, momus, '
+      + 'multimodal-looker, sisyphus, hephaestus, atlas, sisyphus-junior.',
+  },
+  load_skills: {
+    type: 'array',
+    items: { type: 'string' },
+    default: [],
+    description:
+      'Skills the child should load first via the skill tool. Named in the child prompt.',
+  },
+  run_in_background: {
+    type: 'boolean',
+    description:
+      'Whether to run in the background and return a durable id immediately (bg_... or ses_...). '
+      + 'Defaults to false; set true when the result is not needed before the next action. '
+      + 'Collect background ids with background_output after a completion notice.',
+  },
+  task_id: {
+    type: 'string',
+    description:
+      'Continuation session id (ses_...) from a previous task() / call_omo_agent() call. '
+      + 'When set, the prompt is delivered as the next turn of that existing child.',
+  },
+}
+
+const TASK_OUTPUT = {
+  schema: {
+    oneOf: [
+      {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          kind: { type: 'string', required: true, const: 'background' },
+          jobId: { type: 'string', required: true },
+        },
+      },
+      {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          kind: { type: 'string', required: true, const: 'continuable' },
+          subagentId: { type: 'string', required: true },
+        },
+      },
+      {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          kind: { type: 'string', required: true, const: 'foreground' },
+          runId: { type: 'string', required: true },
+          output: { type: 'array', required: true, items: { type: 'json' } },
+        },
+      },
+    ],
+  },
+  render: (_args, value) => [{
+    type: 'text',
+    text: value.kind === 'background'
+      ? `started background task ${value.jobId}; collect with background_output(task_id="${value.jobId}") after the completion notice`
+      : value.kind === 'continuable'
+        ? `started session ${value.subagentId}; follow up with task(task_id="${value.subagentId}", prompt=...)`
+        : outputValueText(value.output),
+  }],
+}
+
+async function executeTask(ctx, args, exec) {
+  const parent = exec.agent
+  if (parent === undefined) {
+    throw new Error('task tool requires a calling agent (exec.agent was undefined)')
+  }
+
+  const route = resolveTaskRoute(args)
+  if (route.kind === 'followup') {
+    return followup(ctx, args, route.taskId, parent, exec)
+  }
+
+  const label = labelFor(args)
+  const request = {
+    label,
+    prompt: [{ type: 'text', text: composeChildPrompt(route, args) }],
+    parent,
+  }
+  if (route.kind === 'subagent-type') {
+    request.toolFilter = SUBAGENT_TYPE_DEFS[route.subagentType].toolFilter
+  }
+
+  if (args.run_in_background === true) {
+    return startBackground(ctx, request, label, parent, exec)
+  }
+
+  const run = await ctx.subagents.start(PROVIDER, { ...request, signal: exec.signal })
+  return settleForegroundRun(run)
+}
+
+function registerDelegationTool(ctx, toolName, description) {
+  ctx.tools.register(defineTool({
+    name: toolName,
+    description,
+    parameters: TASK_PARAMETERS,
+    output: TASK_OUTPUT,
+    isConcurrencySafe: () => true,
+    execute: (args, exec) => executeTask(ctx, args, exec),
+  }))
 }
 
 export function apply(ctx) {
-  ctx.tools.register(defineTool({
-    name: 'task',
-    description:
-      'Omo-compatible task delegation. Start a fresh specialist or generic subagent, '
-      + 'or continue an existing continuable child by task_id. Foreground calls wait for the '
-      + 'result; background calls return a durable subagent id. Set run_in_background only when '
-      + 'your next action does not depend on that result.',
-    parameters: {
-      description: {
-        type: 'string',
-        description: 'A short (3-5 word) description of the delegated task; becomes the subagent label.',
-      },
-      prompt: {
-        type: 'string',
-        required: true,
-        description:
-          'The complete, self-contained task for the subagent. The child does not share this '
-          + 'conversation, so include everything it needs.',
-      },
-      category: {
-        type: 'string',
-        description:
-          'Optional omo task category. dsh has no category system, so this maps to a generic '
-          + 'subagent persona note. Known: visual-engineering, deep, ultrabrain, quick, writing, git.',
-      },
-      subagent_type: {
-        type: 'string',
-        description:
-          'Optional named specialist. Known: oracle, librarian, explore, metis, momus, '
-          + 'multimodal-looker, sisyphus, hephaestus, atlas, sisyphus-junior.',
-      },
-      load_skills: {
-        type: 'array',
-        items: { type: 'string' },
-        default: [],
-        description:
-          'Skills the child should load first. dsh subagent requests cannot carry skills, so '
-          + 'these are prepended to the child prompt as an instruction to use the skill tool.',
-      },
-      run_in_background: {
-        type: 'boolean',
-        description:
-          'Whether to run in the background and return a durable subagent id immediately. '
-          + 'Defaults to false; set true when the result is not needed before the next action.',
-      },
-      task_id: {
-        type: 'string',
-        description:
-          'Continuable child session id (e.g. ses_...) from a previous task() call. When set, '
-          + 'the prompt is delivered as the next turn of that existing child.',
-      },
-    },
-    output: {
-      schema: {
-        oneOf: [
-          {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-              kind: { type: 'string', required: true, const: 'background' },
-              jobId: { type: 'string', required: true },
-            },
-          },
-          {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-              kind: { type: 'string', required: true, const: 'continuable' },
-              subagentId: { type: 'string', required: true },
-            },
-          },
-          {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-              kind: { type: 'string', required: true, const: 'foreground' },
-              runId: { type: 'string', required: true },
-              output: { type: 'array', required: true, items: { type: 'json' } },
-            },
-          },
-        ],
-      },
-      render: (_args, value) => [{
-        type: 'text',
-        text: value.kind === 'background'
-          ? `started background subagent task ${value.jobId}`
-          : value.kind === 'continuable'
-            ? `started subagent ${value.subagentId}`
-            : outputValueText(value.output),
-      }],
-    },
-    // Children never mutate the parent session; task starts are synchronous
-    // commutative insertions.
-    isConcurrencySafe: () => true,
-    async execute(args, exec) {
-      const parent = exec.agent
-      if (parent === undefined) {
-        throw new Error('task tool requires a calling agent (exec.agent was undefined)')
-      }
-
-      const route = resolveTaskRoute(args)
-      if (route.kind === 'followup') {
-        return followup(ctx, args, route.taskId, parent, exec)
-      }
-
-      const label = labelFor(args)
-      const request = {
-        label,
-        prompt: [{ type: 'text', text: composeChildPrompt(route, args) }],
-        parent,
-      }
-      if (route.kind === 'subagent-type') {
-        const def = SUBAGENT_TYPE_DEFS[route.subagentType]
-        request.persona = personaText(route.subagentType)
-        request.toolFilter = def.toolFilter
-      }
-
-      if (args.run_in_background === true) {
-        return startBackground(ctx, request, label, parent, exec)
-      }
-
-      const run = await ctx.subagents.start(PROVIDER, { ...request, signal: exec.signal })
-      return settleForegroundRun(run)
-    },
-  }))
+  registerDelegationTool(
+    ctx,
+    'task',
+    'Omo task delegation. Start a specialist (subagent_type) or category worker, '
+    + 'or continue a child with task_id=ses_.... Foreground waits for the result; '
+    + 'background returns bg_... / ses_.... Collect bg_... with background_output '
+    + 'only after a completion notice.',
+  )
+  registerDelegationTool(
+    ctx,
+    'call_omo_agent',
+    'Alias of task(). Same arguments: subagent_type, category, load_skills, '
+    + 'run_in_background, task_id, prompt. Prefer this name when a skill example '
+    + 'writes call_omo_agent.',
+  )
 }
