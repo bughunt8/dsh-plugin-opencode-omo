@@ -46,6 +46,12 @@ export interface OmoRoleRegistryFace {
   roleFor(sessionId: string): string
   /** Persist the role selected for one session. */
   setRole(sessionId: string, role: string): Promise<void>
+  /**
+   * Synchronously pin a session's role (child spawn) so the next prompt
+   * assembly sees it. Persistence is best-effort; the in-memory override wins
+   * for this process even if the settings write fails.
+   */
+  pinRole(sessionId: string, role: string): void
   /** Resolved per-role model routing configuration (user layer only). */
   configFor(role: string): OmoRoleConfig
   /** Persist one role's model routing configuration. */
@@ -172,6 +178,16 @@ export class OmoRoleRegistry extends Service {
       else this.sessionOverrides.set(sessionId, previous)
       throw error
     }
+  }
+
+  pinRole(sessionId: string, role: string): void {
+    if (!isOmoRole(role)) throw new TypeError(`unknown omo role "${role}"`)
+    this.sessionOverrides.set(sessionId, role)
+    void this.settings.update({
+      sessions: { ...this.settings.get().sessions, [sessionId]: role },
+    }).catch(() => {
+      // The override already applies for this process.
+    })
   }
 
   configFor(role: string): OmoRoleConfig {
