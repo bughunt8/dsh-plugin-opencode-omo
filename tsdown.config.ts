@@ -22,7 +22,7 @@ const BROWSER_EXTERNALS = [
 
 export default [
   {
-    entry: { index: 'src/index.ts' },
+    entry: { index: 'src/index_en.ts' },
     outDir: 'lib',
     format: ['esm'],
     platform: 'node',
@@ -33,7 +33,7 @@ export default [
     deps: { neverBundle: hostExternal },
   },
   {
-    entry: { client: 'src/client/index.ts' },
+    entry: { client: 'src/client/index_en.ts' },
     outDir: 'lib',
     format: 'cjs',
     platform: 'browser',

@@ -188,6 +188,13 @@ test('rejects unknown roles through the registry', async () => {
   await assert.rejects(ctx.omoRoles.setRoleConfig('unknown', { fallbackModels: [] }))
 })
 
+test('pinRole applies synchronously for a child session', async () => {
+  const { ctx } = await boot()
+  ctx.omoRoles.pinRole('child-session', 'oracle')
+  assert.equal(ctx.omoRoles.roleFor('child-session'), 'oracle')
+  assert.throws(() => ctx.omoRoles.pinRole('child-session', 'unknown'))
+})
+
 test('dsh compat detection returns a stable supported/fallback snapshot', () => {
   const compat = detectDshCompat()
   assert.equal(typeof compat.assistantPrefill, 'boolean')

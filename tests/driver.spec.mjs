@@ -49,44 +49,28 @@ test('complete system prompt folds omo rules in despite suppressed runtime conte
     assert.match(prompt, /<env>/)
     assert.match(prompt, /Working directory:/)
     assert.doesNotMatch(prompt, /Current DSH file policy/)
+    assert.doesNotMatch(prompt, /Approval prompts are disabled/)
   } finally {
     rmSync(cwd, { recursive: true, force: true })
   }
 })
 
-test('policy block renders the sandbox mode, boundary, and escalation path', () => {
+test('dsh sandbox and approval facts stay out of the omo system prompt', () => {
   const cwd = mkdtempSync(join(tmpdir(), 'omo-policy-'))
   try {
     const ctx = {
       tools: { schemas: () => [] },
-      get: (service) => service === 'sandboxPolicy'
-        ? { resolve: () => ({ mode: 'workspace-write', workspaceRoot: cwd }) }
-        : undefined,
-    }
-    const prompt = systemPromptFor(ctx, roleFace(), mockState(), mockAgent(cwd))
-    assert.match(prompt, /Current DSH file policy: workspace-write/)
-    assert.match(prompt, /sandbox_permissions/)
-    assert.match(prompt, /Never use sudo/)
-    assert.ok(prompt.indexOf('</env>') < prompt.indexOf('Current DSH file policy'))
-  } finally {
-    rmSync(cwd, { recursive: true, force: true })
-  }
-})
-
-test('policy block states the finality of denials when approval is never', () => {
-  const cwd = mkdtempSync(join(tmpdir(), 'omo-policy-never-'))
-  try {
-    const ctx = {
-      tools: { schemas: () => [] },
       get: (service) => {
-        if (service === 'sandboxPolicy') return { resolve: () => ({ mode: 'read-only', workspaceRoot: cwd }) }
-        if (service === 'approval') return { overrideOf: () => undefined, config: { policy: 'never' } }
+        if (service === 'sandboxPolicy') return { resolve: () => ({ mode: 'workspace-write', workspaceRoot: cwd }) }
+        if (service === 'approval') return { overrideOf: () => 'never', config: { policy: 'never' } }
         return undefined
       },
     }
     const prompt = systemPromptFor(ctx, roleFace(), mockState(), mockAgent(cwd))
-    assert.match(prompt, /Current DSH file policy: read-only/)
-    assert.match(prompt, /Approval prompts are disabled/)
+    assert.match(prompt, /<env>/)
+    assert.doesNotMatch(prompt, /Current DSH file policy/)
+    assert.doesNotMatch(prompt, /Approval prompts are disabled/)
+    assert.doesNotMatch(prompt, /sandbox_permissions/)
   } finally {
     rmSync(cwd, { recursive: true, force: true })
   }
@@ -182,6 +166,32 @@ test('atlas routes to the extracted opus-4-7 family prompt', () => {
     const ctx = { tools: { schemas: () => [] } }
     const prompt = systemPromptFor(ctx, roleFace('atlas'), mockState(), mockAgent(cwd, [], 'claude-opus-4-7'))
     assert.match(prompt, /You are Atlas - the Master Orchestrator/)
+    assert.match(prompt, /running on Claude Opus 4\.7/)
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
+test('atlas routes generic Claude to the default variant, not opus-4-7', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'omo-atlas-default-'))
+  try {
+    const ctx = { tools: { schemas: () => [] } }
+    const prompt = systemPromptFor(ctx, roleFace('atlas'), mockState(), mockAgent(cwd, [], 'claude-sonnet-4-6'))
+    assert.match(prompt, /You are Atlas - the Master Orchestrator from OhMyOpenCode/)
+    assert.doesNotMatch(prompt, /running on Claude Opus 4\.7/)
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
+test('hephaestus GPT-5.6 hyphen id uses the gpt-5-6 variant', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'omo-heph-56-'))
+  try {
+    const ctx = { tools: { schemas: () => [] } }
+    const prompt = systemPromptFor(ctx, roleFace('hephaestus'), mockState(), mockAgent(cwd, [], 'gpt-5-6'))
+    assert.match(prompt, /You are Hephaestus, an autonomous deep worker based on GPT-5\.6/)
+    assert.match(prompt, /todo_write/)
+    assert.doesNotMatch(prompt, /\$\{todoDiscipline\}/)
   } finally {
     rmSync(cwd, { recursive: true, force: true })
   }
@@ -257,6 +267,34 @@ test('maxSteps section appears in the system prompt at the ceiling on a patchles
     const patched = { ...roleFace(), compat: { assistantPrefill: true }, configFor: () => ({ maxSteps: 4, fallbackModels: [] }) }
     const patchedPrompt = systemPromptFor(ctx, patched, mockState(), mockAgent(cwd, events))
     assert.doesNotMatch(patchedPrompt, /CRITICAL - MAXIMUM STEPS REACHED/)
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
+test('specialist roles render env plus the specialist body, not Sisyphus identity', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'omo-oracle-child-'))
+  try {
+    const ctx = { tools: { schemas: () => [] } }
+    const prompt = systemPromptFor(ctx, roleFace('oracle'), mockState(), mockAgent(cwd, [], 'claude-opus-4-7'))
+    assert.match(prompt, /<env>/)
+    assert.match(prompt, /Working directory:/)
+    assert.match(prompt, /strategic technical advisor/)
+    assert.doesNotMatch(prompt, /Your designated identity for this session is "Sisyphus"/)
+    assert.doesNotMatch(prompt, /You are an AI agent powered by DeepSeek Harness/)
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
+test('explore specialist prompt stays env plus the search-specialist body', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'omo-explore-child-'))
+  try {
+    const ctx = { tools: { schemas: () => [] } }
+    const prompt = systemPromptFor(ctx, roleFace('explore'), mockState(), mockAgent(cwd))
+    assert.match(prompt, /<env>/)
+    assert.match(prompt, /codebase search specialist/)
+    assert.doesNotMatch(prompt, /Your designated identity for this session is "Sisyphus"/)
   } finally {
     rmSync(cwd, { recursive: true, force: true })
   }

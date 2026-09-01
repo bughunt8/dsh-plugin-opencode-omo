@@ -14,11 +14,19 @@ const SLOP_PATTERNS = [
   /\bthis (function|method|class|code|file|line) (is|does|will|adds|returns|handles)/i,
 ]
 
-function detectSlop(name, args) {
+/** Replacement text on `edit`: shim surface is `newString`, native dsh is `new_string`. */
+function editReplacement(args) {
+  if (typeof args?.newString === 'string') return args.newString
+  if (typeof args?.new_string === 'string') return args.new_string
+  return undefined
+}
+
+export function detectSlop(name, args) {
   let content
   if (name === 'write' && typeof args?.content === 'string') content = args.content
-  else if (name === 'edit' && typeof args?.new_string === 'string') content = args.new_string
+  else if (name === 'edit') content = editReplacement(args)
   else return undefined
+  if (typeof content !== 'string') return undefined
 
   for (const line of content.split(/\r?\n/)) {
     const trimmed = line.trim()

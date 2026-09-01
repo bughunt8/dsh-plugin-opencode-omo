@@ -61,6 +61,12 @@ const roleConfigSchema = z.object({
 const SettingsSchema = z.object({
   roles: z.dict(roleConfigSchema).default({}),
   sessions: z.dict(z.string()).default({}),
+  // Schema parity with the English entry: the omo.json keys are declared here
+  // so settings written by the General tab survive switching variants.
+  omoJson: z.object({
+    enabled: z.boolean().default(false),
+    path: z.string().default('~/.omo/omo.json'),
+  }).default({ enabled: false, path: '~/.omo/omo.json' }),
 })
 
 /** Read a request body as UTF-8 text. */

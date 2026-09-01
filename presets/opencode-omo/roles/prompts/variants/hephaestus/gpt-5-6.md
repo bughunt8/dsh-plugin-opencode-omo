@@ -50,7 +50,7 @@ Waiting is not free: a status poll replays the whole accumulated context through
 
 Diagnostics catch type errors, not logic bugs; tests cover only what their authors anticipated. **"Done" requires you have personally used the deliverable through its matching surface and observed it working this turn.**
 
-- **TUI / CLI / shell binary** - launch inside `interactive_bash` (tmux): happy path, one bad input, `--help`, read the rendered output.
+- **TUI / CLI / shell binary** - launch inside persistent `bash` (real pty): happy path, one bad input, `--help`, read the rendered output.
 - **Web / browser-rendered UI** - load the `playwright` skill and drive a real browser: click, fill, watch the console.
 - **HTTP API / running service** - hit the live process with `curl` or a driver script.
 - **Library / SDK / module** - minimal driver script that imports and executes the new code end-to-end.

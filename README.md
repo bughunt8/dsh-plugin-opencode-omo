@@ -11,7 +11,7 @@ A DeepSeek Harness plugin that adds an `opencode-omo` agent preset (mode) to the
 - **opencode + omo system prompt** — the real opencode `default.txt` persona (tone, style, proactiveness, conventions, code style, task guidance) + omo's Sisyphus orchestrator identity, declared as the **complete** system prompt: the dsh harness identity and runtime-context snapshot are suppressed for this mode. The loop shim additionally prepends opencode's **live environment block** (exact model id, working dir, workspace root, git, platform, date, recomputed every step).
 - **omo role picker in the composer** — in dsh's existing `conversation.input.left` tool-row slot (after the access/plan chips): `sisyphus`, `hephaestus` (Deep Agent), `prometheus` (Plan Builder), `atlas` (Plan Executor), `sisyphus-junior`, `athena`/`athena-junior`/`council-member`, `metis`, `momus`, `oracle`, `librarian`, `explore`, `multimodal-looker`. Selecting a role swaps the session's complete system prompt and applies that role's configured model.
 - **Global "Role Settings"** in the dsh settings panel (`settings.section`): per-role primary model dropdown (follow current / fixed) under a centered "Primary model" label; a dsh-style circle "+" button opens a fallback model list below the role box (repeatable additions, cancel/close adds nothing), persisted in `opencode-omo-roles` settings. On request failure the loop shim advances through the role's fallback chain before the harness retry policy runs.
-- **opencode toolchain (complete)** — persistent `bash`, `read`/`write`/`edit`/`read_image`, `apply_patch`, `glob`/`grep`, `todo_write`, `skill`, `web_fetch`/`web_search`, `lsp`, `exit_plan_mode` (plan), `ask_user_question`. `tool-surface.mjs` overwrites the model-visible descriptions/parameters with opencode's `tool/*.txt` text and shims `read`/`edit`/`write` to opencode's parameter names.
+- **opencode toolchain (complete)** — persistent `bash`, `read`/`write`/`edit`/`read_image`, `apply_patch`, `glob`/`grep`, `todo_write`, `skill`, `web_fetch`/`web_search`, `lsp`, `exit_plan_mode` (plan), `ask_user_question`. `tool-surface.mjs` overwrites the model-visible descriptions/parameters with opencode's `tool/*.txt` text and shims `read`/`edit`/`write`/`web_search` to opencode's parameter names (`web_search.query` → dsh `queries`).
 - **omo `task()` surface** — `task-shim.mjs` registers the omo-style `task(category/subagent_type/load_skills/run_in_background/task_id)` invocation, mapping it onto dsh named subagents + generic delegation.
 - **omo multi-role subagents** — `oracle` (read-only advisor), `librarian` (external docs/code search), `explore` (codebase grep), `metis` (pre-planning), `momus` (plan reviewer), `multimodal-looker` (media), plus generic `subagent`/`subagent_fork` + `workflow`/`ralph`.
 - **omo context injection** — AGENTS.md/CLAUDE.md walk-up + `skills/` + omo's `rules-injector` (`.omo/rules`, `.cursor/rules`, `.github/instructions`, `copilot-instructions.md`).
@@ -132,3 +132,47 @@ Full report: `docs/exps/2026-08-15-opencode-omo-equivalence-bench.md`; raw trans
 3. Child subagent per-role sampling cannot reliably resolve the role id (dsh child headers/descriptors do not carry it); primary-role sampling defaults ARE applied and children inherit the session model.
 4. Plan files: dsh itself does not persist them; the plugin writes `.opencode/plans/*` after `exit_plan_mode` approval. A first-class plan-file seam remains an optional improvement.
 5. team-mode TUI, comment-checker CLI, and hashline diff enhancer remain non-LLM/editing experience differences.
+
+## English (_en) variant
+
+The shipped UI text (role catalog descriptions, settings labels, compat warnings, preset description, delegation routing table, and slash-command descriptions) is Chinese. An English variant ships alongside it as `*_en` files; the Chinese originals are untouched:
+
+| Surface | English file |
+|---|---|
+| Role catalog (ids/modes/order preserved) | `src/core/omo-roles_en.ts` |
+| dsh compat warnings | `src/core/dsh-capabilities_en.ts` |
+| Role picker / settings UI / host+client entries | `src/client/RoleSelect_en.tsx`, `OmoSettingsSection_en.tsx`, `RoleSettings_en.tsx`, `src/client/index_en.ts`, `src/index_en.ts`, `src/omo-role-registry_en.ts` |
+| Preset description (mode picker) | `presets/opencode-omo/preset_en.yml` |
+| Delegation routing table / slash commands | `presets/opencode-omo/driver_en.mjs`, `omo-commands_en.mjs` |
+
+To run the English set:
+
+1. Point the build at the `_en` entries in `tsdown.config.ts` (`src/index_en.ts`, `src/client/index_en.ts`) and rebuild.
+2. Point the two preset rows in `agent.cordis.yml` at `./driver_en.mjs` and `./omo-commands_en.mjs`.
+3. Re-point the user-root preset symlink so `preset.yml` resolves to `preset_en.yml` (the roster reads the file by that name).
+4. Restart dsh.
+
+Compatibility: both variants register the **same** settings namespace (`opencode-omo-roles`) and the same HTTP endpoints, so per-role model/fallback configuration made through either variant keeps working after switching; `tests/omo-host_en.spec.mjs` pins this cross-variant behavior, and `tests/omo-roles_en.spec.mjs` pins catalog parity, ASCII-only strings, and that the originals still carry their Chinese text.
+
+
+## General tab: omo.json defaults import
+
+Settings → opencode-omo → **General** provides an omo.json defaults flow:
+
+- **Use omo.json** ON/OFF — persisted in the same `opencode-omo-roles` namespace; when ON, the configured file is imported at host startup and immediately when switched on.
+- **omo.json location** — defaults to `~/.omo/omo.json`.
+- **Re-Import omo.json** — applies the file into the running host now and shows a per-role result summary (unknown roles and malformed entries are reported as warnings, valid entries still import).
+
+The file is a flat JSON map of role id → config (same shape as the role-config wire format):
+
+```json
+{
+  "oracle": { "model": {"provider":"tokeness","model":"gpt-5.5"}, "fallbackModels": [{"provider":"tokeness","model":"claude-opus-4-7"}], "maxSteps": 12 }
+}
+```
+
+A CLI equivalent ships at `scripts/omo.json.apply.mjs`: `node scripts/omo.json.apply.mjs [path] [--host http://127.0.0.1:3080]`. Files over 2 MB are refused unread, and imports never delete existing config — they overwrite only the roles present in the file.
+
+### Providers for the imported models
+
+A real omo.json references pi-ai-style providers (`apiyi`, `zai-coding-plan`, `moonshotai`, `minimax`, …) that the DSH catalog may not know. `docs/omo-json-providers.example.yml` is a copy-paste `llm-pi-ai.providers` snippet for the four providers the shipped example uses, with placeholder `apiKeyEnv` names and `.invalid`-TLD baseURLs that fail loudly until replaced. Paste it under `llm-pi-ai:` in `~/.dsh/settings.yaml`, fill in the real endpoints/keys, and restart dsh.

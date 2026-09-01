@@ -10,7 +10,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 export const name = 'opencode-omo-commands'
 export const inject = ['commands']
 
-const COMMANDS = [
+export const COMMANDS = [
   {
     name: 'start-work',
     description: '从 .omo/plans 选择计划并开始/继续 Atlas 执行（加载 start-work skill）',
@@ -44,7 +44,7 @@ const COMMANDS = [
   {
     name: 'team-mode',
     description: '以 team-mode 并行委托一个 lead + 多个 worker',
-    text: 'Enter team mode. Use `workflow`/`ralph` (or parallel `subagent` calls) to stand up one lead worker plus independent specialists for disjoint workstreams, pass each a complete standalone prompt, collect and verify every result, and keep going until all lanes are done.',
+    text: 'Enter team mode. Use `workflow`/`ralph` (or parallel `task` / `call_omo_agent` calls) to stand up one lead worker plus independent specialists for disjoint workstreams, pass each a complete standalone prompt, collect and verify every result, and keep going until all lanes are done.',
   },
 ]
 

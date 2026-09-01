@@ -82,7 +82,7 @@ Exploration is cheap; assumption is expensive. Over-exploration is also failure.
 
 `lsp_diagnostics` catches type errors, not logic bugs; tests cover only what their authors anticipated. **"Done" requires you have personally used the deliverable through its matching surface and observed it working** within this turn. The surface determines the tool:
 
-- **TUI / CLI / shell binary** - launch inside `interactive_bash` (tmux). Send keystrokes, run the happy path, try one bad input, hit `--help`, read the rendered output.
+- **TUI / CLI / shell binary** - launch inside persistent `bash` (real pty). Send keystrokes, run the happy path, try one bad input, hit `--help`, read the rendered output.
 - **Web / browser-rendered UI** - load the `playwright` skill and drive a real browser. Open the page, click the elements, fill the forms, watch the console, screenshot when it helps.
 - **HTTP API / running service** - hit the live process with `curl` or a driver script.
 - **Library / SDK / module** - write a minimal driver script that imports and executes the new code end-to-end.

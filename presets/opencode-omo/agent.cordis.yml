@@ -13,7 +13,7 @@
 # listeners apply opencode tool gating, maxSteps, ultrawork, and role model
 # fallback — no dsh-side driver seam required.
 - id: opencode-omo-loop
-  name: ./driver.mjs
+  name: ./driver_en.mjs
 
 # AGENTS.md / CLAUDE.md walk-up injection, mirroring opencode's instruction loading.
 - id: agent-instructions
@@ -43,22 +43,26 @@
   name: ./escalating-bash.mjs
 
 # ── lsp ─────────────────────────────────────────────────────────────────────
-# omo's LSP surface (goto-definition, references, symbols, hover). Scoped to this
-# preset via an isolate realm; a TypeScript/JS server is preconfigured.
+# omo's LSP surface (named lsp_* tools over dsh's single `lsp` / ctx.lsp.query).
+# Scoped to this preset via an isolate realm; a TypeScript/JS server is preconfigured.
 - id: lsp
   name: cordis:group
   group: true
   isolate:
     lsp: true
   config:
+    # rc.2 deployment guard: the 0.1.1-rc.2 harness does not ship
+    # @deepseek-ai/dsh-lsp / dsh-lsp-stdio / dsh-tool-lsp, so these three
+    # rows are disabled to keep the whole preset mountable. LSP tools still
+    # arrive from the host bundle (e.g. dsh-lsp-actions) on this deployment.
+    # RE-ENABLE when the harness provides the packages (0.1.2 base bundle).
     - id: lsp-service
       name: '@deepseek-ai/dsh-lsp'
+      disabled: true
 
     - id: lsp-stdio
       name: '@deepseek-ai/dsh-lsp-stdio'
-      # Graceful degradation: without the server binary this row disables itself
-      # (lsp-service + tool-lsp stay mounted), so the whole preset still loads.
-      disabled: !!js '!(function () { try { const { spawnSync } = process.getBuiltinModule("node:child_process"); return spawnSync("typescript-language-server", ["--version"], { stdio: "ignore", timeout: 5000 }).error === undefined } catch { return false } })()'
+      disabled: true
       config:
         servers:
           typescript:
@@ -73,6 +77,12 @@
 
     - id: tool-lsp
       name: '@deepseek-ai/dsh-tool-lsp'
+      disabled: true
+
+    # Hide dsh `lsp`; expose omo names. Navigation maps to ctx.lsp.query;
+    # diagnostics / rename / symbols return a harness fallback (dsh omitted them).
+    - id: opencode-omo-lsp-surface
+      name: ./lsp-surface.mjs
 
 # ── shell ───────────────────────────────────────────────────────────────────
 # opencode's shell is persistent; dsh's fresh `tool-bash` is replaced with the
@@ -143,6 +153,17 @@
 - id: tool-jobs
   name: '@deepseek-ai/dsh-tool-jobs'
 
+# Model-visible OpenCode/omo names (background_output / background_cancel)
+# over the dsh jobs + subagent execution layer. Hides job_* / subagent from
+# the assembled catalog the same way tool-surface hides dsh web_search.queries.
+- id: opencode-omo-delegation-surface
+  name: ./delegation-surface.mjs
+
+# dsh stand-in for omo's Codex Stop continuation: steer while Boulder work
+# for this session still has unchecked plan checkboxes.
+- id: opencode-omo-start-work-continuation
+  name: ./start-work-continuation.mjs
+
 # ── skills ──────────────────────────────────────────────────────────────────
 # omo ships its skills beside the plugin. `omo-skills.mjs` registers them as
 # `user-dsh`-sourced skills (not `custom`), so the third-party
@@ -162,7 +183,7 @@
 # ── omo builtin commands ─────────────────────────────────────────────────────
 # Native dsh command registrations for the omo slash-command surface.
 - id: opencode-omo-commands
-  name: ./omo-commands.mjs
+  name: ./omo-commands_en.mjs
 
 # ── goals ───────────────────────────────────────────────────────────────────
 # omo's goal feature (create_goal / get_goal / update_goal) maps here.
@@ -215,8 +236,10 @@
         tailChars: 1024
 
 # ── delegation and workflows ────────────────────────────────────────────────
-# omo's multi-role subagents: each named subagent tool carries its own persona
-# and tool restrictions, so the orchestrator picks a specialist by name.
+# omo's multi-role subagents: each named tool carries its own tool
+# restrictions. The child system prompt is the driver's complete
+# `<env>` + specialist body (role pinned at spawn); a static persona
+# overlay would shadow that section and restore the dsh harness identity.
 - id: delegation
   name: cordis:group
   group: true
@@ -243,6 +266,29 @@
         toolName: subagent_fork
         backgroundMode: continuable
 
+    # Prometheus planner. `plan` must be a registered global toolName: every
+    # named-row deny list includes it, and dsh `tools.restrict()` throws on
+    # unknown names (so omitting this row breaks librarian/explore/oracle spawn).
+    - id: role-plan
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: plan
+        enableRunInBackground: false
+        toolFilter:
+          deny:
+            - task
+            - call_omo_agent
+            - subagent
+            - subagent_fork
+            - plan
+            - sisyphus
+            - hephaestus
+            - atlas
+            - sisyphus-junior
+            - workflow
+            - ralph
+
     # omo's read-only specialist subagents.
     - id: role-oracle
       name: '@deepseek-ai/dsh-tool-subagent'
@@ -250,20 +296,24 @@
         provider: spawn
         toolName: oracle
         enableRunInBackground: false
-        persona: !!js "process.getBuiltinModule('node:fs').readFileSync(process.getBuiltinModule('node:url').fileURLToPath(new URL('roles/prompts/variants/specialists/oracle-default.md', baseUrl)), 'utf8')"
         toolFilter:
           deny:
             - write
             - edit
             - task
+            - call_omo_agent
             - subagent
             - subagent_fork
+            - plan
             - oracle
             - librarian
             - explore
             - metis
             - momus
             - multimodal-looker
+            - athena
+            - athena-junior
+            - council-member
             - workflow
             - ralph
 
@@ -273,20 +323,24 @@
         provider: spawn
         toolName: librarian
         enableRunInBackground: false
-        persona: !!js "process.getBuiltinModule('node:fs').readFileSync(process.getBuiltinModule('node:url').fileURLToPath(new URL('roles/prompts/variants/rendered/librarian.md', baseUrl)), 'utf8')"
         toolFilter:
           deny:
             - write
             - edit
             - task
+            - call_omo_agent
             - subagent
             - subagent_fork
+            - plan
             - oracle
             - librarian
             - explore
             - metis
             - momus
             - multimodal-looker
+            - athena
+            - athena-junior
+            - council-member
             - workflow
             - ralph
 
@@ -296,20 +350,24 @@
         provider: spawn
         toolName: explore
         enableRunInBackground: false
-        persona: !!js "process.getBuiltinModule('node:fs').readFileSync(process.getBuiltinModule('node:url').fileURLToPath(new URL('roles/prompts/variants/specialists/explore.md', baseUrl)), 'utf8')"
         toolFilter:
           deny:
             - write
             - edit
             - task
+            - call_omo_agent
             - subagent
             - subagent_fork
+            - plan
             - oracle
             - librarian
             - explore
             - metis
             - momus
             - multimodal-looker
+            - athena
+            - athena-junior
+            - council-member
             - workflow
             - ralph
 
@@ -319,20 +377,24 @@
         provider: spawn
         toolName: metis
         enableRunInBackground: false
-        persona: !!js "process.getBuiltinModule('node:fs').readFileSync(process.getBuiltinModule('node:url').fileURLToPath(new URL('roles/prompts/variants/rendered/metis-default.md', baseUrl)), 'utf8')"
         toolFilter:
           deny:
             - write
             - edit
             - task
+            - call_omo_agent
             - subagent
             - subagent_fork
+            - plan
             - oracle
             - librarian
             - explore
             - metis
             - momus
             - multimodal-looker
+            - athena
+            - athena-junior
+            - council-member
             - workflow
             - ralph
 
@@ -342,20 +404,24 @@
         provider: spawn
         toolName: momus
         enableRunInBackground: false
-        persona: !!js "process.getBuiltinModule('node:fs').readFileSync(process.getBuiltinModule('node:url').fileURLToPath(new URL('roles/prompts/variants/specialists/momus-default.md', baseUrl)), 'utf8')"
         toolFilter:
           deny:
             - write
             - edit
             - task
+            - call_omo_agent
             - subagent
             - subagent_fork
+            - plan
             - oracle
             - librarian
             - explore
             - metis
             - momus
             - multimodal-looker
+            - athena
+            - athena-junior
+            - council-member
             - workflow
             - ralph
 
@@ -365,11 +431,92 @@
         provider: spawn
         toolName: multimodal-looker
         enableRunInBackground: false
-        persona: !!js "process.getBuiltinModule('node:fs').readFileSync(process.getBuiltinModule('node:url').fileURLToPath(new URL('roles/prompts/variants/specialists/multimodal-looker.md', baseUrl)), 'utf8')"
         toolFilter:
           allow:
             - read
             - read_image
+
+    # Council reviewers (composer athena / athena-junior / council-member).
+    - id: role-athena
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: athena
+        enableRunInBackground: false
+        toolFilter:
+          deny:
+            - write
+            - edit
+            - task
+            - call_omo_agent
+            - subagent
+            - subagent_fork
+            - plan
+            - oracle
+            - librarian
+            - explore
+            - metis
+            - momus
+            - multimodal-looker
+            - athena
+            - athena-junior
+            - council-member
+            - workflow
+            - ralph
+
+    - id: role-athena-junior
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: athena-junior
+        enableRunInBackground: false
+        toolFilter:
+          deny:
+            - write
+            - edit
+            - task
+            - call_omo_agent
+            - subagent
+            - subagent_fork
+            - plan
+            - oracle
+            - librarian
+            - explore
+            - metis
+            - momus
+            - multimodal-looker
+            - athena
+            - athena-junior
+            - council-member
+            - workflow
+            - ralph
+
+    - id: role-council-member
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: council-member
+        enableRunInBackground: false
+        toolFilter:
+          deny:
+            - write
+            - edit
+            - task
+            - call_omo_agent
+            - subagent
+            - subagent_fork
+            - plan
+            - oracle
+            - librarian
+            - explore
+            - metis
+            - momus
+            - multimodal-looker
+            - athena
+            - athena-junior
+            - council-member
+            - workflow
+            - ralph
 
     # omo's primary agents are also delegatable named subagents in the
     # reference roster. These reuse the same complete role prompts as the
@@ -380,18 +527,22 @@
       config:
         provider: spawn
         toolName: sisyphus
-        persona: !!js "process.getBuiltinModule('node:fs').readFileSync(process.getBuiltinModule('node:url').fileURLToPath(new URL('persona.md', baseUrl)), 'utf8')"
         toolFilter:
           deny:
             - task
+            - call_omo_agent
             - subagent
             - subagent_fork
+            - plan
             - oracle
             - librarian
             - explore
             - metis
             - momus
             - multimodal-looker
+            - athena
+            - athena-junior
+            - council-member
             - sisyphus
             - hephaestus
             - atlas
@@ -404,18 +555,22 @@
       config:
         provider: spawn
         toolName: hephaestus
-        persona: !!js "process.getBuiltinModule('node:fs').readFileSync(process.getBuiltinModule('node:url').fileURLToPath(new URL('roles/prompts/hephaestus.md', baseUrl)), 'utf8')"
         toolFilter:
           deny:
             - task
+            - call_omo_agent
             - subagent
             - subagent_fork
+            - plan
             - oracle
             - librarian
             - explore
             - metis
             - momus
             - multimodal-looker
+            - athena
+            - athena-junior
+            - council-member
             - sisyphus
             - hephaestus
             - atlas
@@ -428,18 +583,22 @@
       config:
         provider: spawn
         toolName: atlas
-        persona: !!js "process.getBuiltinModule('node:fs').readFileSync(process.getBuiltinModule('node:url').fileURLToPath(new URL('roles/prompts/atlas.md', baseUrl)), 'utf8')"
         toolFilter:
           deny:
             - task
+            - call_omo_agent
             - subagent
             - subagent_fork
+            - plan
             - oracle
             - librarian
             - explore
             - metis
             - momus
             - multimodal-looker
+            - athena
+            - athena-junior
+            - council-member
             - sisyphus
             - hephaestus
             - atlas
@@ -452,18 +611,22 @@
       config:
         provider: spawn
         toolName: sisyphus-junior
-        persona: !!js "process.getBuiltinModule('node:fs').readFileSync(process.getBuiltinModule('node:url').fileURLToPath(new URL('roles/prompts/sisyphus-junior.md', baseUrl)), 'utf8')"
         toolFilter:
           deny:
             - task
+            - call_omo_agent
             - subagent
             - subagent_fork
+            - plan
             - oracle
             - librarian
             - explore
             - metis
             - momus
             - multimodal-looker
+            - athena
+            - athena-junior
+            - council-member
             - sisyphus
             - hephaestus
             - atlas
