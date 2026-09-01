@@ -223,11 +223,14 @@ function assertOmoDiverged(before, after) {
   assert.notDeepEqual(after.omo, after.minimal, 'omo catalog matches minimal; isolation test is vacuous')
 }
 
-test('host bundle patch inserts only the role-registry row, no tools', () => {
+test('host bundle patch inserts only the role-registry and web-fetch rows, no tools', () => {
   const insert = hostInsert()
   assert.match(insert, /id: opencode-omo/)
   assert.match(insert, /name: '@royenheart\/dsh-plugin-opencode-omo'/)
-  assert.equal([...insert.matchAll(/^\s+- id:/gm)].length, 1)
+  // Fork (rc.2 line): the rc.2 base bundle does NOT register
+  // @deepseek-ai/dsh-web-fetch-http, so the plugin's own provider row stays.
+  // Upstream removed it only as part of the held 0.1.2-alpha.2 migration.
+  assert.equal([...insert.matchAll(/^\s+- id:/gm)].length, 2)
 })
 
 test('omo agent-plane modules live in the preset composition, not the host patch', () => {
@@ -241,8 +244,8 @@ test('omo agent-plane modules live in the preset composition, not the host patch
     './lsp-surface.mjs',
     './start-work-continuation.mjs',
     './omo-skills.mjs',
-    './omo-commands.mjs',
-    './driver.mjs',
+    './omo-commands_en.mjs',
+    './driver_en.mjs',
     './tool-surface.mjs',
   ]) {
     assert.match(preset, new RegExp(module.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))

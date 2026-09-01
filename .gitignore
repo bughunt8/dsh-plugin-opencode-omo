@@ -239,3 +239,5 @@ tmp
 tests/benches/solution.py
 tests/benches/cwd-check.txt
 pnpm-lock.yaml
+lib.bak/
+package-lock.json
