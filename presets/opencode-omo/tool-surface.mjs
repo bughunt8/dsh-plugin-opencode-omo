@@ -10,6 +10,8 @@ import { basename, extname } from 'node:path'
 import { canonicalPath } from '@deepseek-ai/dsh-sandbox'
 import { defineTool, parameterSchemaSpecToJsonSchema } from '@deepseek-ai/dsh-tools'
 import { ESCALATION_GUIDANCE, ESCALATION_PARAMETERS, escalationAvailableFor } from './escalating-bash.mjs'
+import { applyOmoDelegationCatalog } from './delegation-surface.mjs'
+import { applyOmoLspCatalog } from './lsp-surface.mjs'
 
 export const name = 'opencode-omo-tool-surface'
 export const inject = ['tools']
@@ -103,8 +105,9 @@ function imageMediaTypeForPath(filePath) {
 }
 
 const PARENT_PATH_SEGMENT = /(?:^|[\\/])\.\.(?:[\\/]|$)/
+const DIRECTORY_READ_LIMIT = 2000
 
-function imageSessionResolveOptions(exec, requestedPath) {
+function sessionResolveOptions(exec, requestedPath) {
   const cwd = exec.agent?.session?.header?.cwd
   if (cwd === undefined || (!PARENT_PATH_SEGMENT.test(cwd) && !PARENT_PATH_SEGMENT.test(requestedPath))) {
     return { ...(cwd !== undefined ? { cwd } : {}), signal: exec.signal }
@@ -114,7 +117,7 @@ function imageSessionResolveOptions(exec, requestedPath) {
 
 async function resolveImageReadTarget(ctx, exec, requestedPath) {
   const fs = ctx.get('fs')
-  const target = await fs.resolve(requestedPath, imageSessionResolveOptions(exec, requestedPath))
+  const target = await fs.resolve(requestedPath, sessionResolveOptions(exec, requestedPath))
   const info = await fs.stat(target, exec.signal)
   if (info === undefined) {
     ctx.emit('fs/observed', target, { kind: 'absent' }, exec)
@@ -290,7 +293,12 @@ export function bashDescription(options = {}) {
     .split('${commandSection}').join(commandSection)
 }
 
-/** Author-facing opencode parameter specs for tools whose name mapping is safe. */
+/**
+ * Author-facing opencode parameter specs. read/edit/write/web_search also
+ * have execution shims that convert these names into the dsh contract.
+ * glob/grep/skill/bash/web_fetch keep their names, so the overlay is
+ * description-only for those.
+ */
 const OPENCODE_PARAMS = {
   read: {
     filePath: { type: 'string', required: true, description: 'The absolute path to the file or directory to read' },
@@ -324,6 +332,21 @@ const OPENCODE_PARAMS = {
   },
   web_search: {
     query: { type: 'string', required: true, description: 'Websearch query' },
+    numResults: { type: 'number', description: 'Number of search results to return (default: 8)' },
+    livecrawl: {
+      type: 'string',
+      enum: ['fallback', 'preferred'],
+      description: "Live crawl mode - 'fallback': use live crawling as backup if cached content unavailable, 'preferred': prioritize live crawling (default: 'fallback')",
+    },
+    type: {
+      type: 'string',
+      enum: ['auto', 'fast', 'deep'],
+      description: "Search type - 'auto': balanced search (default), 'fast': quick results, 'deep': comprehensive search",
+    },
+    contextMaxCharacters: {
+      type: 'number',
+      description: 'Maximum characters for context string optimized for LLMs (default: 10000)',
+    },
   },
   web_fetch: {
     url: { type: 'string', required: true, description: 'The URL to fetch content from' },
@@ -338,6 +361,97 @@ export function toDshReadArgs(args = {}) {
     ...(offset !== undefined ? { offset } : {}),
     ...(limit !== undefined ? { limit } : {}),
   }
+}
+
+function directoryEntryLine(entry) {
+  const name = String(entry?.name ?? '')
+  return entry?.type === 'directory' ? `${name}/` : name
+}
+
+/** OpenCode `read` on a directory: one name per line, trailing `/` for dirs. */
+export function formatDirectoryListing(listing) {
+  const lines = (listing.entries ?? []).map(directoryEntryLine)
+  const body = lines.join('\n')
+  if (listing.offset === undefined || listing.total === undefined) return body
+  const shown = listing.entries?.length ?? 0
+  const end = listing.offset + shown - 1
+  if (end >= listing.total || shown === 0 && listing.total === 0) return body
+  const footer = `(Showing ${listing.offset}-${end} of ${listing.total}. Use offset=${end + 1} to continue.)`
+  return body === '' ? footer : `${body}\n${footer}`
+}
+
+async function listDirectoryIfNeeded(ctx, converted, exec) {
+  const requested = converted?.file_path
+  if (typeof requested !== 'string' || requested.trim() === '') return undefined
+  const fs = ctx.get('fs')
+  if (fs === undefined || typeof fs.listDir !== 'function') return undefined
+  const target = await fs.resolve(requested, sessionResolveOptions(exec, requested))
+  const info = await fs.stat(target, exec.signal)
+  if (info === undefined || info.type !== 'directory') return undefined
+  const children = await fs.listDir(target, exec.signal)
+  const sorted = [...children].sort((left, right) => String(left.name).localeCompare(String(right.name)))
+  const offset = Number.isInteger(converted.offset) && converted.offset >= 1 ? converted.offset : 1
+  const limit = Number.isInteger(converted.limit) && converted.limit >= 1 ? converted.limit : DIRECTORY_READ_LIMIT
+  const entries = sorted.slice(offset - 1, offset - 1 + limit).map(entry => ({
+    name: entry.name,
+    type: entry.type,
+  }))
+  ctx.emit?.('fs/observed', target, { kind: 'present', version: info.version }, exec)
+  return {
+    kind: 'directory',
+    path: target.displayPath,
+    offset,
+    total: sorted.length,
+    entries,
+  }
+}
+
+export function createReadShim(original, ctx, description, parameters) {
+  if (original === undefined) {
+    throw new Error('opencode-omo-tool-surface: cannot shim "read" because the original dsh definition is unavailable')
+  }
+  return defineTool({
+    name: 'read',
+    description: description ?? original.description,
+    parameters: parameters ?? OPENCODE_PARAMS.read,
+    output: {
+      schema: { type: 'json' },
+      render: (args, value) => {
+        if (value?.kind === 'directory') {
+          return [{ type: 'text', text: formatDirectoryListing(value) }]
+        }
+        return original.output.render(toDshReadArgs(args), value)
+      },
+      ...(typeof original.output.presentationMeta === 'function'
+        ? {
+          presentationMeta: (args, value) => (
+            value?.kind === 'directory'
+              ? { path: value.path, kind: 'directory', entries: value.entries }
+              : original.output.presentationMeta(toDshReadArgs(args), value)
+          ),
+        }
+        : {}),
+    },
+    ...(typeof original.isConcurrencySafe === 'function'
+      ? { isConcurrencySafe: args => original.isConcurrencySafe(toDshReadArgs(args)) }
+      : {}),
+    ...(typeof original.presentCall === 'function'
+      ? { presentCall: args => original.presentCall(toDshReadArgs(args)) }
+      : {}),
+    ...(typeof original.presentResult === 'function'
+      ? {
+        presentResult: (args, result) => (
+          result?.value?.kind === 'directory' ? undefined : original.presentResult(toDshReadArgs(args), result)
+        ),
+      }
+      : {}),
+    execute: async (args, exec) => {
+      const converted = toDshReadArgs(args)
+      const listing = await listDirectoryIfNeeded(ctx, converted, exec)
+      if (listing !== undefined) return listing
+      return original.execute(converted, exec)
+    },
+  })
 }
 
 export function toDshEditArgs(args = {}) {
@@ -358,10 +472,24 @@ export function toDshWriteArgs(args = {}) {
   }
 }
 
+/**
+ * opencode's websearch takes a single `query` string (plus optional Exa/Parallel
+ * knobs). dsh 0.1.1+ takes a required `queries` array and owns result-count /
+ * crawl / search-type as deployment config, so those extra fields are accepted
+ * then dropped here.
+ */
+export function toDshWebSearchArgs(args = {}) {
+  const { query, queries } = args ?? {}
+  if (typeof query === 'string') return { queries: [query] }
+  if (Array.isArray(queries)) return { queries }
+  return { queries: [] }
+}
+
 const SHIM_CONVERTERS = {
   read: toDshReadArgs,
   edit: toDshEditArgs,
   write: toDshWriteArgs,
+  web_search: toDshWebSearchArgs,
 }
 
 /** Pure surface description/parameter model used by both assembly and tests. */
@@ -459,7 +587,12 @@ function ensureShimsFor(ctx, agent) {
 
   const readOriginal = ctx.tools.get('read', agent)
   if (readOriginal !== undefined) {
-    agent.ctx.tools.register(createShim('read', readOriginal, readDescriptionFor(readImagePresent), OPENCODE_PARAMS.read))
+    agent.ctx.tools.register(createReadShim(
+      readOriginal,
+      ctx,
+      readDescriptionFor(readImagePresent),
+      OPENCODE_PARAMS.read,
+    ))
   }
 
   const editOriginal = ctx.tools.get('edit', agent)
@@ -471,6 +604,17 @@ function ensureShimsFor(ctx, agent) {
   if (writeOriginal !== undefined) {
     agent.ctx.tools.register(createShim('write', writeOriginal, WRITE_TXT, OPENCODE_PARAMS.write))
   }
+
+  const searchOriginal = ctx.tools.get('web_search', agent)
+  if (searchOriginal !== undefined) {
+    const year = new Date().getFullYear()
+    agent.ctx.tools.register(createShim(
+      'web_search',
+      searchOriginal,
+      WEBSEARCH_TXT.replaceAll('{{year}}', String(year)),
+      OPENCODE_PARAMS.web_search,
+    ))
+  }
 }
 
 export function apply(ctx) {
@@ -479,8 +623,8 @@ export function apply(ctx) {
   const bashEscalation = escalationAvailableFor(ctx.get('shell'), ctx.get('sandboxPolicy'))
 
   // Per-agent execution shims: registered in the agent's OWN tool layer so they
-  // shadow the preset's inherited read/edit/write definitions without touching
-  // the standing layer (which tool-fs owns and would reject a same-name insert).
+  // shadow the preset's inherited read/edit/write/web_search definitions without
+  // touching the standing layer (which would reject a same-name insert).
   ctx.on('agent/created', ({ agent }) => {
     ensureShimsFor(ctx, agent)
   })
@@ -489,6 +633,9 @@ export function apply(ctx) {
   ctx.on('system-prompt/assemble', async (assembly, context, next) => {
     const transformed = await next()
     if (context.agent !== undefined) ensureShimsFor(ctx, context.agent)
-    return { ...transformed, tools: applyOpencodeSurface(transformed.tools, { bashEscalation }) }
+    return {
+      ...transformed,
+      tools: applyOmoLspCatalog(applyOmoDelegationCatalog(applyOpencodeSurface(transformed.tools, { bashEscalation }))),
+    }
   })
 }

@@ -11,10 +11,13 @@ import {
   applyOpencodeSurface,
   bashDescription,
   createReadImageShim,
+  createReadShim,
+  formatDirectoryListing,
   name,
   opencodeToolSurface,
   toDshEditArgs,
   toDshReadArgs,
+  toDshWebSearchArgs,
   toDshWriteArgs,
 } from '../presets/opencode-omo/tool-surface.mjs'
 
@@ -92,6 +95,11 @@ test('parameters use opencode names for shimmed and name-safe tools', () => {
 
   assert.ok(parameters.web_search.query.required)
   assert.equal(parameters.web_search.query.description, 'Websearch query')
+  assert.equal(parameters.web_search.queries, undefined)
+  assert.equal(parameters.web_search.numResults.type, 'number')
+  assert.deepEqual(parameters.web_search.livecrawl.enum, ['fallback', 'preferred'])
+  assert.deepEqual(parameters.web_search.type.enum, ['auto', 'fast', 'deep'])
+  assert.equal(parameters.web_search.contextMaxCharacters.type, 'number')
 
   assert.ok(parameters.web_fetch.url.required)
   assert.equal(parameters.web_fetch.url.description, 'The URL to fetch content from')
@@ -121,6 +129,22 @@ test('arg converters map opencode names to dsh names', () => {
     file_path: '/tmp/a.txt',
     content: 'hello',
   })
+
+  assert.deepEqual(toDshWebSearchArgs({ query: 'Galaxy on Fire 2 source' }), {
+    queries: ['Galaxy on Fire 2 source'],
+  })
+  assert.deepEqual(
+    toDshWebSearchArgs({
+      query: 'latest AI news 2026',
+      numResults: 4,
+      livecrawl: 'preferred',
+      type: 'deep',
+      contextMaxCharacters: 2000,
+    }),
+    { queries: ['latest AI news 2026'] },
+  )
+  assert.deepEqual(toDshWebSearchArgs({ queries: ['a', 'b'] }), { queries: ['a', 'b'] })
+  assert.deepEqual(toDshWebSearchArgs({}), { queries: [] })
 })
 
 test('applyOpencodeSurface rewrites matched tools and leaves others untouched', () => {
@@ -128,6 +152,7 @@ test('applyOpencodeSurface rewrites matched tools and leaves others untouched', 
     { name: 'read', description: 'dsh read', parameters: { type: 'object', properties: { file_path: {} } } },
     { name: 'write', description: 'dsh write', parameters: { type: 'object', properties: { file_path: {}, content: {} } } },
     { name: 'todo_write', description: 'dsh todo', parameters: { type: 'object', properties: { todos: {} } } },
+    { name: 'web_search', description: 'dsh search', parameters: { type: 'object', properties: { queries: {} } } },
     { name: 'apply_patch', description: 'keep me', parameters: { type: 'object', properties: { patch_text: {} } } },
   ]
   const surface = applyOpencodeSurface(original, { year: 2026 })
@@ -142,8 +167,12 @@ test('applyOpencodeSurface rewrites matched tools and leaves others untouched', 
   assert.match(surface[2].description, /Create and maintain a structured task list for the current coding session/)
   assert.ok(surface[2].parameters.properties.todos)
 
-  assert.equal(surface[3].description, 'keep me')
-  assert.ok(surface[3].parameters.properties.patch_text)
+  assert.match(surface[3].description, /Search the web using the session's web search provider/)
+  assert.ok(surface[3].parameters.properties.query)
+  assert.equal(surface[3].parameters.properties.queries, undefined)
+
+  assert.equal(surface[4].description, 'keep me')
+  assert.ok(surface[4].parameters.properties.patch_text)
 })
 
 test('applyOpencodeSurface detects read_image presence for read guidance', () => {
@@ -234,6 +263,102 @@ test('read_image shim executes through ctx.get(fs), not ctx.fs', async () => {
   assert.equal(emitted[0][0], 'fs/observed')
   assert.deepEqual(emitted[0][2], { kind: 'present', version: 1 })
   assert.deepEqual(shim.output.render({}, value), [{ type: 'text', text: 'rendered:/tmp/a.png' }])
+})
+
+test('formatDirectoryListing matches the OpenCode one-name-per-line contract', () => {
+  assert.equal(
+    formatDirectoryListing({
+      entries: [
+        { name: 'README.md', type: 'file' },
+        { name: 'src', type: 'directory' },
+      ],
+    }),
+    'README.md\nsrc/',
+  )
+  assert.equal(
+    formatDirectoryListing({
+      offset: 1,
+      total: 3,
+      entries: [
+        { name: 'a', type: 'file' },
+        { name: 'b', type: 'directory' },
+      ],
+    }),
+    'a\nb/\n(Showing 1-2 of 3. Use offset=3 to continue.)',
+  )
+})
+
+test('read shim lists directories and forwards files to the original tool', async () => {
+  const emitted = []
+  const dirTarget = { displayPath: '/tmp/proj' }
+  const fileTarget = { displayPath: '/tmp/proj/a.txt' }
+  const fs = {
+    async resolve(requestedPath) {
+      return requestedPath.endsWith('a.txt') ? fileTarget : dirTarget
+    },
+    async stat(received) {
+      if (received === fileTarget) return { type: 'file', version: 2 }
+      return { type: 'directory', version: 7 }
+    },
+    async listDir(received) {
+      assert.equal(received, dirTarget)
+      return [
+        { name: 'src', type: 'directory' },
+        { name: 'README.md', type: 'file' },
+        { name: 'z-last', type: 'file' },
+      ]
+    },
+  }
+  const ctx = {
+    get(name) {
+      return name === 'fs' ? fs : undefined
+    },
+    emit(...args) {
+      emitted.push(args)
+    },
+  }
+  let forwarded
+  const original = {
+    name: 'read',
+    description: 'dsh read',
+    output: {
+      schema: { type: 'object' },
+      render: (_args, value) => [{ type: 'text', text: `file:${value.path}` }],
+    },
+    async execute(args) {
+      forwarded = args
+      return { path: args.file_path, offset: 1, lines: [], totalLines: 0 }
+    },
+  }
+  const shim = createReadShim(original, ctx)
+  const exec = { agent: { session: { header: { cwd: '/tmp/proj' } } }, signal: undefined }
+
+  const listing = await shim.execute({ filePath: '/tmp/proj' }, exec)
+  assert.deepEqual(listing, {
+    kind: 'directory',
+    path: '/tmp/proj',
+    offset: 1,
+    total: 3,
+    entries: [
+      { name: 'README.md', type: 'file' },
+      { name: 'src', type: 'directory' },
+      { name: 'z-last', type: 'file' },
+    ],
+  })
+  assert.deepEqual(shim.output.render({ filePath: '/tmp/proj' }, listing), [{
+    type: 'text',
+    text: 'README.md\nsrc/\nz-last',
+  }])
+  assert.equal(emitted[0][0], 'fs/observed')
+  assert.equal(forwarded, undefined)
+
+  const file = await shim.execute({ filePath: '/tmp/proj/a.txt', offset: 4, limit: 8 }, exec)
+  assert.deepEqual(forwarded, { file_path: '/tmp/proj/a.txt', offset: 4, limit: 8 })
+  assert.equal(file.path, '/tmp/proj/a.txt')
+  assert.deepEqual(shim.output.render({ filePath: '/tmp/proj/a.txt' }, file), [{
+    type: 'text',
+    text: 'file:/tmp/proj/a.txt',
+  }])
 })
 
 test('read_image shim preserves route and extension gates', async () => {
