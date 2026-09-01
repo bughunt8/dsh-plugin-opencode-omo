@@ -35,16 +35,16 @@ You have access to tools via function calling. This guide defines WHEN to call e
 | `Read` | Before making ANY claim about file contents. Before editing any file. | ✅ Yes - read multiple files at once |
 | `Grep` | Finding patterns, imports, usages across codebase. BEFORE claiming "X is used in Y". | ✅ Yes - run multiple greps at once |
 | `Glob` | Finding files by name/extension pattern. BEFORE claiming "file X exists". | ✅ Yes - run multiple globs at once |
-| `AstGrepSearch` | Finding code patterns with AST awareness (structural matches). | ✅ Yes |
+| ast-grep / `sg` | Finding code patterns with AST awareness (structural matches). | ✅ Yes |
 
 ### Code Intelligence (parallelizable on different files)
 
 | Tool | When to Call | Parallel? |
 |---|---|---|
-| `LspDiagnostics` | **AFTER EVERY edit.** BEFORE claiming task is done. MANDATORY. | ✅ Yes - different files |
-| `LspGotoDefinition` | Finding where a symbol is defined. | ✅ Yes |
-| `LspFindReferences` | Finding all usages of a symbol across workspace. | ✅ Yes |
-| `LspSymbols` | Getting file outline or searching workspace symbols. | ✅ Yes |
+| `lsp_diagnostics` | **AFTER EVERY edit.** BEFORE claiming task is done. MANDATORY. | ✅ Yes - different files |
+| `lsp_goto_definition` | Finding where a symbol is defined. | ✅ Yes |
+| `lsp_find_references` | Finding all usages of a symbol across workspace. | ✅ Yes |
+| `lsp_symbols` | File outline fallback (this harness has no symbol index; use grep / glob). | ✅ Yes |
 
 ### Editing (SEQUENTIAL - must Read first)
 
@@ -63,15 +63,15 @@ You have access to tools via function calling. This guide defines WHEN to call e
 ### Correct Sequences (MANDATORY - follow these exactly):
 
 1. **Answer about code**: Read → (analyze) → Answer
-2. **Edit code**: Read → Edit → LspDiagnostics → Report
+2. **Edit code**: Read → Edit → lsp_diagnostics → Report
 3. **Find something**: Grep/Glob (parallel) → Read results → Report
 4. **Implement feature**: Task(delegate) → Verify results → Report
-5. **Debug**: Read error → Read file → Grep related → Fix → LspDiagnostics
+5. **Debug**: Read error → Read file → Grep related → Fix → lsp_diagnostics
 
 ### PARALLEL RULES:
 
 - **Independent reads/searches**: ALWAYS call simultaneously in ONE response
-- **Dependent operations**: Call sequentially (Edit AFTER Read, LspDiagnostics AFTER Edit)
+- **Dependent operations**: Call sequentially (Edit AFTER Read, lsp_diagnostics AFTER Edit)
 - **Background agents**: ALWAYS `run_in_background=true`, continue working
 </GEMINI_TOOL_GUIDE>
 
@@ -96,15 +96,15 @@ You have access to tools via function calling. This guide defines WHEN to call e
 **CORRECT**:
 ```
 → Call Read(filePath="/src/models/user.ts")
-→ Call LspDiagnostics(filePath="/src/models/user.ts")  // parallel with Read
+→ Call lsp_diagnostics(filePath="/src/models/user.ts")  // parallel with Read
 → (After reading) Call Edit with LINE#ID anchors
-→ Call LspDiagnostics(filePath="/src/models/user.ts")  // verify fix
+→ Call lsp_diagnostics(filePath="/src/models/user.ts")  // verify fix
 → Report: "Fixed. Diagnostics clean."
 ```
 **WRONG**:
 ```
 → Call Edit without reading first ← No LINE#ID anchors = WILL FAIL
-→ Skip LspDiagnostics after edit ← UNVERIFIED
+→ Skip lsp_diagnostics after edit ← UNVERIFIED
 ```
 
 ### Example 3: User asks to find something → Search in parallel
@@ -124,7 +124,7 @@ You have access to tools via function calling. This guide defines WHEN to call e
 ```
 → Call Task(category="quick", load_skills=["typescript-programmer"], run_in_background=false, prompt="...")
 → (After agent completes) Read changed files to verify
-→ Call LspDiagnostics on changed files
+→ Call lsp_diagnostics on changed files
 → Report
 ```
 **WRONG**:

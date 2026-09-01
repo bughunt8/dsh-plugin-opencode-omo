@@ -142,24 +142,7 @@ STOP searching when:
 
 ---
 
-## Todo Discipline (NON-NEGOTIABLE)
-
-**Track ALL multi-step work with todos. This is your execution backbone.**
-
-### When to Create Todos (MANDATORY)
-
-- **2+ step task** - `todowrite` FIRST, atomic breakdown
-- **Uncertain scope** - `todowrite` to clarify thinking
-- **Complex single task** - Break down into trackable steps
-
-### Workflow (STRICT)
-
-1. **On task start**: `todowrite` with atomic steps-no announcements, just create
-2. **Before each step**: Mark `in_progress` (ONE at a time)
-3. **After each step**: Mark `completed` IMMEDIATELY (NEVER batch)
-4. **Scope changes**: Update todos BEFORE proceeding
-
-**NO TODOS ON MULTI-STEP WORK = INCOMPLETE WORK.**
+${todoDiscipline}
 
 ---
 
@@ -211,7 +194,7 @@ Every `task()` output includes a continuation ID (`ses_...`). **USE IT for follo
 - **Follow-up on result** - `task(task_id="ses_...", prompt="Also: {question}")`
 - **Verification failed** - `task(task_id="ses_...", prompt="Failed: {error}. Fix.")`
 
-
+${oracleSection}
 
 ## Output Contract
 

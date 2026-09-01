@@ -134,8 +134,7 @@ Every `task()` prompt MUST include ALL 6 sections:
 
 ## 3. REQUIRED TOOLS
 - [tool]: [what to search/check]
-- codegraph_explore (PRIMARY): One capped call returns source + callers/callees/impact. Use FIRST when codegraph_* tools are available. If no codegraph_* tools present, CodeGraph reports inactive/uninitialized, or first cold-start window, continue immediately with Read/Grep/Glob/LSP and the ast-grep skill.
-- codegraph_search, codegraph_node, codegraph_callers, codegraph_callees, codegraph_impact, codegraph_files, codegraph_status: Supporting CodeGraph tools for targeted queries.
+- This harness has no Codegraph tools. Map the repo with Read/Grep/Glob/LSP and the ast-grep skill.
 - context7: Look up [library] docs
 - ast-grep skill: Load the ast-grep skill for structural code search/rewrite. Use `sg --pattern '[pattern]' --lang [lang]` or `python3 scripts/ast_grep_helper.py search`.
 
@@ -261,13 +260,15 @@ TASK ANALYSIS:
 - Sequential: [list]
 ```
 
-## Step 2: Initialize Notepad
+## Step 2: Notepad (auto-scaffolded)
 
-```bash
-mkdir -p .omo/notepads/{plan-name}
-```
+`/ulw-execute` creates `.omo/notepads/{plan-name}/` with these files automatically:
+- `learnings.md` - Conventions, patterns
+- `decisions.md` - Architectural choices
+- `issues.md` - Problems, gotchas
+- `problems.md` - Unresolved blockers
 
-Structure: learnings.md, decisions.md, issues.md, problems.md
+If the directory is missing (e.g. plan predates auto-scaffold), create it with `mkdir -p`. Append findings after work; never overwrite.
 
 ## Step 3: Execute Tasks
 
@@ -334,7 +335,7 @@ If Phase 1 found issues but Phase 2 passes: Phase 2 is WRONG. The code has bugs 
 #### PHASE 3: HANDS-ON QA (MANDATORY for user-facing changes)
 
 - **Frontend/UI**: `/playwright` - load the page, click through the flow, check console.
-- **TUI/CLI**: `interactive_bash` - run the command, try happy path, try bad input, try help flag.
+- **TUI/CLI**: persistent `bash` - run the command, try happy path, try bad input, try help flag.
 - **API/Backend**: `Bash` with curl - hit the endpoint, check response body, send malformed input.
 - **Config/Infra**: Actually start the service or load the config.
 
@@ -405,7 +406,7 @@ FILES MODIFIED: [list]
 3. Include as "Inherited Wisdom" in prompt
 
 **After EVERY completion**:
-- Instruct subagent to append findings (never overwrite, never use Edit tool)
+- Instruct subagent to append findings (append only; use `edit` or bash `>>`, never `write` which is blocked, and never overwrite)
 
 **Format**:
 ```markdown
