@@ -1,6 +1,15 @@
 # Prompt variant extraction manifest
 
-Generated from the pinned reference checkout `reference/oh-my-openagent` (commit 14083b89).
+Sisyphus family overlays in this directory (and `../family/`) and the
+atlas / hephaestus / oracle / metis / momus rows below were re-extracted
+from oh-my-openagent `v5.0.0-beta.31` (`62ed795`). Librarian / explore /
+multimodal-looker still come from the earlier pin `14083b89`.
+
+Harness-only adaptations (not present upstream): `interactive_bash` → persistent
+`bash`; Atlas `codegraph_*` REQUIRED-TOOLS lines → “this harness has no
+Codegraph tools”. Dynamic `${...}` / `{{ ... }}` / `{CATEGORY_SECTION}`
+placeholders stay in the extracted files and are rendered by `driver.mjs`.
+
 All target paths are relative to `presets/opencode-omo/roles/prompts/variants/`.
 
 ## sisyphus/kimi-k2-6.md
@@ -33,17 +42,17 @@ All target paths are relative to `presets/opencode-omo/roles/prompts/variants/`.
 
 ## hephaestus/gpt.md
 
-- Reference source: `reference/oh-my-openagent/packages/omo-opencode/src/agents/hephaestus/gpt.ts`
+- Reference source: oh-my-openagent `v5.0.0-beta.31` `packages/omo-opencode/src/agents/hephaestus/gpt.ts`
 - Extracted constant/builder: main `return `...`;` template literal of `buildHephaestusPrompt`
-- Line count (wc -l): 258
-- Caveats: No single template constant. Extracted the main return-template body. `${todoDiscipline}` was inlined with the default todo branch of `buildTodoDisciplineSection(useTaskSystem=false)` (task-system branch omitted). The `${oracleSection ? ... : ""}` conditional was resolved to its default empty branch and omitted. All other dynamic `${...}` placeholders are intact.
+- Line count (wc -l): 241
+- Caveats: No single template constant. Extracted the main return-template body. `${oracleSection ? ... : ""}` was kept as `${oracleSection}`. `${todoDiscipline}` and other dynamic `${...}` placeholders stay and are rendered by `familySection`.
 
 ## hephaestus/gpt-5-4.md
 
 - Reference source: `reference/oh-my-openagent/packages/omo-opencode/src/agents/hephaestus/gpt-5-4.ts`
 - Extracted constant/builder: concatenation of block consts `identityBlock`, `intentBlock`, `exploreBlock`, `constraintsBlock`, `executionBlock`, `trackingBlock`, `progressBlock`, `delegationBlock`, `communicationBlock` in builder return order
-- Line count (wc -l): 244
-- Caveats: No single template constant. Concatenated the block const literals in the prompt builder return order, separated by one blank line. `${todoDiscipline}` was inlined with the default todo branch of `buildTodoDisciplineSection(useTaskSystem=false)` (task-system branch omitted). The `${hasOracle ? ... : ""}` conditional in `delegationBlock` was resolved to its default empty branch and omitted. All other dynamic `${...}` placeholders are intact.
+- Line count (wc -l): 227
+- Caveats: No single template constant. Expanded the builder return (`identityBlock` … `communicationBlock`) in order. `${hasOracle ? ... : ""}` was kept as `${oracleSection}`. `${todoDiscipline}` and other dynamic `${...}` placeholders stay and are rendered by `familySection`.
 
 ## hephaestus/gpt-5-5.md
 
@@ -63,56 +72,56 @@ All target paths are relative to `presets/opencode-omo/roles/prompts/variants/`.
 
 - Reference source: `reference/oh-my-openagent/packages/prompts-core/prompts/atlas/default.md`
 - Extracted constant/builder: verbatim copy
-- Line count (wc -l): 502
+- Line count (wc -l): 496
 - Caveats: None
 
 ## atlas/gemini.md
 
 - Reference source: `reference/oh-my-openagent/packages/prompts-core/prompts/atlas/gemini.md`
 - Extracted constant/builder: verbatim copy
-- Line count (wc -l): 525
+- Line count (wc -l): 526
 - Caveats: None
 
 ## atlas/glm.md
 
 - Reference source: `reference/oh-my-openagent/packages/prompts-core/prompts/atlas/glm.md`
 - Extracted constant/builder: verbatim copy
-- Line count (wc -l): 397
+- Line count (wc -l): 403
 - Caveats: None
 
 ## atlas/gpt.md
 
 - Reference source: `reference/oh-my-openagent/packages/prompts-core/prompts/atlas/gpt.md`
 - Extracted constant/builder: verbatim copy
-- Line count (wc -l): 460
+- Line count (wc -l): 461
 - Caveats: None
 
 ## atlas/kimi-k2-7.md
 
 - Reference source: `reference/oh-my-openagent/packages/prompts-core/prompts/atlas/kimi-k2-7.md`
 - Extracted constant/builder: verbatim copy
-- Line count (wc -l): 325
+- Line count (wc -l): 326
 - Caveats: None
 
 ## atlas/kimi-k3.md
 
 - Reference source: `reference/oh-my-openagent/packages/prompts-core/prompts/atlas/kimi-k3.md`
 - Extracted constant/builder: verbatim copy
-- Line count (wc -l): 325
+- Line count (wc -l): 326
 - Caveats: None
 
 ## atlas/kimi.md
 
 - Reference source: `reference/oh-my-openagent/packages/prompts-core/prompts/atlas/kimi.md`
 - Extracted constant/builder: verbatim copy
-- Line count (wc -l): 477
+- Line count (wc -l): 478
 - Caveats: None
 
 ## atlas/opus-4-7.md
 
 - Reference source: `reference/oh-my-openagent/packages/prompts-core/prompts/atlas/opus-4-7.md`
 - Extracted constant/builder: verbatim copy
-- Line count (wc -l): 493
+- Line count (wc -l): 494
 - Caveats: None
 
 ## specialists/oracle-default.md

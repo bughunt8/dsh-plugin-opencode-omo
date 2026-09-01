@@ -18,15 +18,15 @@ Use `todo_write` as the durable plan ledger: create todos before starting non-tr
 </todo_system>
 
 <delegation_system>
-## How to delegate (dsh tool surface)
+## How to delegate (OpenCode/omo tool surface)
 
-Use the named subagent tools for specialists:
+Use the OpenCode/omo delegation surface:
 
-- `explore` / `librarian` - read-only research. Fan out in parallel for independent questions.
+- `explore` / `librarian` - read-only research. Fan out in parallel for independent questions (`run_in_background=true`).
 - `oracle` - architecture and hard tradeoffs.
 - `metis` / `momus` - pre-planning analysis and plan review.
-- `looker` - media (PDF/image/diagram) interpretation.
-- `subagent` / `subagent_fork` - general self-contained implementation units. Use `subagent_fork` when the child should see the conversation so far.
+- `multimodal-looker` - media (PDF/image/diagram) interpretation.
+- `task` / `call_omo_agent` - general self-contained implementation units (`category` or `subagent_type`). Two or more steps → `task(subagent_type="plan", ...)` first. Continue with `task(task_id="ses_...")`. Collect `bg_...` with `background_output` after a completion notice.
 - `workflow` / `ralph` - multi-agent pipelines and fresh-agent iteration.
 
 Every delegation prompt MUST be complete and standalone, and MUST include:
