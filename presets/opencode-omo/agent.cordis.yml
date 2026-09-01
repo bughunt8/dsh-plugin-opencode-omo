@@ -13,7 +13,7 @@
 # listeners apply opencode tool gating, maxSteps, ultrawork, and role model
 # fallback — no dsh-side driver seam required.
 - id: opencode-omo-loop
-  name: ./driver.mjs
+  name: ./driver_en.mjs
 
 # AGENTS.md / CLAUDE.md walk-up injection, mirroring opencode's instruction loading.
 - id: agent-instructions
@@ -178,7 +178,7 @@
 # ── omo builtin commands ─────────────────────────────────────────────────────
 # Native dsh command registrations for the omo slash-command surface.
 - id: opencode-omo-commands
-  name: ./omo-commands.mjs
+  name: ./omo-commands_en.mjs
 
 # ── goals ───────────────────────────────────────────────────────────────────
 # omo's goal feature (create_goal / get_goal / update_goal) maps here.
