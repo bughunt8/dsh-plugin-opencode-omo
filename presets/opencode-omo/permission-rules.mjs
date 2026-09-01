@@ -2,9 +2,12 @@
 // seam. Two rulesets that the prompt/toolFilter layers cannot express:
 //
 // 1. external_directory: file/glob/grep/lsp arguments that resolve outside the
-//    session workspace root ask for approval (opencode's default `ask`).
+//    session workspace root ask for approval in the parent (opencode's default
+//    `ask`). Delegated children cannot approve anything (`approval/policy:
+//    never`), so the same escape is a direct `deny` — otherwise the ask is
+//    auto-rejected and the model sees "the user rejected tool".
 // 2. doom_loop: three identical tool calls for one agent within 60 seconds ask
-//    for approval instead of silently burning the step budget.
+//    in the parent; the same loop is a direct `deny` in a child.
 //
 // Every other allow/deny rule is already enforced by dsh-native sandbox policy,
 // named-subagent toolFilter rows, and the driver's model-family tool gate.
@@ -28,6 +31,14 @@ const PATH_ARGUMENTS = {
   glob: ['path'],
   grep: ['path'],
   lsp: ['file_path'],
+  lsp_goto_definition: ['filePath', 'file_path'],
+  lsp_find_references: ['filePath', 'file_path'],
+  lsp_go_to_implementation: ['filePath', 'file_path'],
+  lsp_hover: ['filePath', 'file_path'],
+  lsp_diagnostics: ['filePath', 'file_path'],
+  lsp_rename: ['filePath', 'file_path'],
+  lsp_prepare_rename: ['filePath', 'file_path'],
+  lsp_symbols: ['filePath', 'file_path'],
 }
 
 function workspaceRoot(exec) {
@@ -61,6 +72,36 @@ export function externalDirectoryReason(exec) {
   if (path === undefined) return undefined
   if (!outsideWorkspace(path, workspaceRoot(exec))) return undefined
   return `opencode-omo: "${exec.name}" would access a path outside the workspace root and requires approval (opencode external_directory: ask)`
+}
+
+/**
+ * True for in-process delegated children. dsh stamps `origin: 'subagent'` and
+ * a positive `delegationDepth` on the child session header; either is enough.
+ */
+export function isDelegatedSession(exec) {
+  const header = exec.agent?.session?.header
+  if (header == null) return false
+  if (header.origin === 'subagent') return true
+  return typeof header.delegationDepth === 'number' && header.delegationDepth >= 1
+}
+
+/**
+ * Parent sessions keep `ask`. Children convert the same reason to `deny` so
+ * the approval layer never phrases the outcome as a user rejection. The
+ * wording stays factual: native omo has no "report this to the parent"
+ * coaching line, only a failed tool result.
+ */
+export function settleAsk(exec, reason) {
+  if (isDelegatedSession(exec)) {
+    return {
+      kind: 'deny',
+      reason: reason
+        .replace(' and requires approval', '')
+        .replace('requires approval', 'is denied')
+        + ' (delegated session cannot escalate)',
+    }
+  }
+  return { kind: 'ask', reason }
 }
 
 /** Per-agent repeated-call tracking for the doom-loop rule. */
@@ -113,11 +154,20 @@ export function apply(ctx) {
 
   ctx.on('tools/pre-execute', async (exec, next) => {
     const decision = await next()
+    // Native sandbox / other pre-execute hooks may already have asked.
+    // Children cannot grant those either — collapse them here so the
+    // approval layer never phrases the outcome as a user rejection.
+    if (decision.kind === 'ask' && isDelegatedSession(exec)) {
+      const reason = typeof decision.reason === 'string' && decision.reason.length > 0
+        ? decision.reason
+        : `tool "${exec.name}" requires approval`
+      return settleAsk(exec, reason)
+    }
     if (decision.kind !== 'allow') return decision
     const external = externalDirectoryReason(exec)
-    if (external !== undefined) return { kind: 'ask', reason: external }
+    if (external !== undefined) return settleAsk(exec, external)
     const doom = doomLoopReason(stateFor(exec), exec)
-    if (doom !== undefined) return { kind: 'ask', reason: doom }
+    if (doom !== undefined) return settleAsk(exec, doom)
     return decision
   })
 

@@ -1,15 +1,17 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { doomLoopReason, externalDirectoryReason, outsideWorkspace, pathArgument } from '../presets/opencode-omo/permission-rules.mjs'
+import { doomLoopReason, externalDirectoryReason, isDelegatedSession, outsideWorkspace, pathArgument, settleAsk } from '../presets/opencode-omo/permission-rules.mjs'
 
-function exec(name, args, cwd = '/repo') {
-  return { name, arguments: args, agent: { session: { header: { cwd } } } }
+function exec(name, args, cwd = '/repo', header = {}) {
+  return { name, arguments: args, agent: { session: { header: { cwd, ...header } } } }
 }
 
 test('pathArgument reads the first path-bearing parameter', () => {
   assert.equal(pathArgument(exec('read', { file_path: '/repo/a.txt' })), '/repo/a.txt')
   assert.equal(pathArgument(exec('grep', { pattern: 'x', path: 'src' })), 'src')
   assert.equal(pathArgument(exec('bash', { command: 'ls' })), undefined)
+  assert.equal(pathArgument(exec('lsp_goto_definition', { filePath: '/repo/a.ts' })), '/repo/a.ts')
+  assert.equal(pathArgument(exec('lsp_find_references', { file_path: 'src/a.ts' })), 'src/a.ts')
 })
 
 test('pathArgument covers the camelCase shim surface for read/write/edit', () => {
@@ -52,4 +54,23 @@ test('doomLoopReason resets after the window', () => {
   doomLoopReason(state, call, 1000)
   doomLoopReason(state, call, 2000)
   assert.equal(doomLoopReason(state, call, 200_000), undefined)
+})
+
+test('isDelegatedSession is true for origin=subagent or depth >= 1', () => {
+  assert.equal(isDelegatedSession(exec('read', { file_path: 'a' })), false)
+  assert.equal(isDelegatedSession(exec('read', { file_path: 'a' }, '/repo', { origin: 'subagent' })), true)
+  assert.equal(isDelegatedSession(exec('read', { file_path: 'a' }, '/repo', { delegationDepth: 1 })), true)
+  assert.equal(isDelegatedSession(exec('read', { file_path: 'a' }, '/repo', { delegationDepth: 0 })), false)
+})
+
+test('settleAsk keeps ask in the parent and denies in a child', () => {
+  const reason = 'opencode-omo: "read" would access a path outside the workspace root and requires approval (opencode external_directory: ask)'
+  const parent = settleAsk(exec('read', { filePath: '../secret' }), reason)
+  assert.deepEqual(parent, { kind: 'ask', reason })
+  const child = settleAsk(exec('read', { filePath: '../secret' }, '/repo', { origin: 'subagent' }), reason)
+  assert.equal(child.kind, 'deny')
+  assert.match(child.reason, /outside the workspace root/)
+  assert.match(child.reason, /delegated session cannot escalate/)
+  assert.doesNotMatch(child.reason, /requires approval/)
+  assert.doesNotMatch(child.reason, /report the limitation/)
 })
