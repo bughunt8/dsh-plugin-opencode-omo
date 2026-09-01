@@ -11,12 +11,18 @@
 # required.
 #
 # The preset enables dsh's native web_fetch tool (`fetch: true` in its
-# `tool-web` row), so this bundle also registers the native HTTP fetch
-# provider into the shared `ctx.web`. With exactly one fetch provider
-# registered, dsh's web seam auto-selects it; no `web` row override is needed.
+# `tool-web` row), so this bundle also declares the native HTTP fetch
+# provider row for the shared `ctx.web` (see the disabled row below).
 - insert:
     - id: opencode-omo
       name: '@royenheart/dsh-plugin-opencode-omo'
 
+    # rc.2 deployment guard: the 0.1.1-rc.2 harness does not ship
+    # @deepseek-ai/dsh-web-fetch-http, so an enabled row fails boot with
+    # ERR_MODULE_NOT_FOUND. The row stays, disabled, to document the rc.2
+    # delta (upstream 0.1.2 has no row: the base bundle already registers
+    # the provider, and a second insert would throw WEB_DUPLICATE_PROVIDER).
+    # RE-ENABLE when the harness provides the package.
     - id: opencode-omo-web-fetch
       name: '@deepseek-ai/dsh-web-fetch-http'
+      disabled: true

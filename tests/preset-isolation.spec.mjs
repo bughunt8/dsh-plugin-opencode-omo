@@ -230,7 +230,10 @@ test('host bundle patch inserts only the role-registry and web-fetch rows, no to
   // Fork (rc.2 line): the rc.2 base bundle does NOT register
   // @deepseek-ai/dsh-web-fetch-http, so the plugin's own provider row stays.
   // Upstream removed it only as part of the held 0.1.2-alpha.2 migration.
+  // The rc.2 harness also lacks the package entirely, so the row must be
+  // disabled or boot dies with ERR_MODULE_NOT_FOUND.
   assert.equal([...insert.matchAll(/^\s+- id:/gm)].length, 2)
+  assert.match(insert, /id: opencode-omo-web-fetch\n\s*name: '@deepseek-ai\/dsh-web-fetch-http'\n\s*disabled: true/)
 })
 
 test('omo agent-plane modules live in the preset composition, not the host patch', () => {
