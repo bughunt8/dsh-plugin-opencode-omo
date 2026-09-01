@@ -43,6 +43,8 @@ Branch depending on what's available.
 
 ### Path A: Team mode ENABLED
 
+This harness has no `team_*` tools. Skip Path A and use Path B (parallel `task()`). The block below is only for a harness that actually exposes `team_create` / `team_send_message`.
+
 When the `team_*` tools are present, create a **debug-squad** team and split investigation across members working on different evidence sources. This is the right default whenever you have ≥3 hypotheses and any of them would take >10 minutes to investigate single-threaded.
 
 **Team spec** — write to `~/.omo/teams/debug-squad/config.json`:
@@ -86,9 +88,9 @@ When the `team_*` tools are present, create a **debug-squad** team and split inv
 
 **Team does NOT include Oracle** — Oracle is a hard-reject team member type. Oracle is used separately in Phase 4 (see `04-oracle-triple.md`).
 
-### Path B: Team mode DISABLED
+### Path B: Team mode DISABLED (this harness)
 
-Fan out async explore/deep subagents instead. Same rule: one hypothesis per subagent.
+This is the default here. Fan out async explore/deep subagents instead. Same rule: one hypothesis per subagent.
 
 ```
 task(subagent_type="explore", load_skills=[], run_in_background=true,
