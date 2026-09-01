@@ -51,14 +51,18 @@
   isolate:
     lsp: true
   config:
+    # rc.2 deployment guard: the 0.1.1-rc.2 harness does not ship
+    # @deepseek-ai/dsh-lsp / dsh-lsp-stdio / dsh-tool-lsp, so these three
+    # rows are disabled to keep the whole preset mountable. LSP tools still
+    # arrive from the host bundle (e.g. dsh-lsp-actions) on this deployment.
+    # RE-ENABLE when the harness provides the packages (0.1.2 base bundle).
     - id: lsp-service
       name: '@deepseek-ai/dsh-lsp'
+      disabled: true
 
     - id: lsp-stdio
       name: '@deepseek-ai/dsh-lsp-stdio'
-      # Graceful degradation: without the server binary this row disables itself
-      # (lsp-service + tool-lsp stay mounted), so the whole preset still loads.
-      disabled: !!js '!(function () { try { const { spawnSync } = process.getBuiltinModule("node:child_process"); return spawnSync("typescript-language-server", ["--version"], { stdio: "ignore", timeout: 5000 }).error === undefined } catch { return false } })()'
+      disabled: true
       config:
         servers:
           typescript:
@@ -73,6 +77,7 @@
 
     - id: tool-lsp
       name: '@deepseek-ai/dsh-tool-lsp'
+      disabled: true
 
     # Hide dsh `lsp`; expose omo names. Navigation maps to ctx.lsp.query;
     # diagnostics / rename / symbols return a harness fallback (dsh omitted them).
