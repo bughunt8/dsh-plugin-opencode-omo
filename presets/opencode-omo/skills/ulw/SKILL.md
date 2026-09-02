@@ -1,8 +1,8 @@
 ---
 name: ulw
-description: "ULTRAWORK super loop — the omo 'just say ulw and walk away' mode. Activates on '/ulw', 'ulw', 'just say ulw', 'ulw it', or any request to run ultrawork on a task, in any language. Generic for any workflow and any database: it first assesses whether a Domain Map (covering ALL systems, workflows and databases in scope) would be best executed BEFORE this skill, then binds a per-codebase system map and a workflow state machine (items, stages, path matrix, stores, queues, final destination) and runs ALL ultrawork phases with zero intervention: Loop A context + audit (Deep-agent evidence sweep, Items List, Target Matrix, false-green post-mortem, Audit List + Tools Plan), Loop B root-cause (codebase-first, adversarial Prometheus debate, no manual data fixes), Loop C decision-complete plans (Metis review), Loop D implementation (skeptical Hephaestus + Momus review), Loop E deploy + 30-minute soak repeated until 5 independent evidence samples per acceptance lane, then an adversarial ORACLE re-executes verification and reproduces artifact hashes."
+description: "ULTRAWORK super loop — the omo 'just say ulw and walk away' mode. Activates on '/ulw', 'ulw', 'just say ulw', 'ulw it', or any request to run ultrawork on a task, in any language. Generic for any workflow and any database: it first assesses whether a Domain Map (covering ALL systems, workflows and databases in scope) would be best executed BEFORE this skill, then binds a per-codebase system map and a workflow state machine (items, stages, path matrix, stores, queues, final destination) and runs ALL ultrawork phases with zero intervention: Loop A context + audit (Deep-agent evidence sweep, Items List, Target Matrix, false-green post-mortem, Audit List + Tools Plan), Loop B root-cause (codebase-first, adversarial Prometheus debate, no manual data fixes), Loop C decision-complete plans (Metis review), Loop D implementation (skeptical Hephaestus + Momus review), Loop E deploy + 30-minute soak repeated until 5 independent evidence samples per acceptance lane, then an adversarial ORACLE re-executes verification and reproduces artifact hashes, then a 5-lane review, commit, and final report. Never self-activates for ordinary questions; mention it is available when a large task would clearly benefit."
 metadata:
-  short-description: "ULTRAWORK super loop (generic workflows + databases): Domain Map pre-flight (all systems, workflows, databases) -> audit (Loop A) -> root cause + plan (Loop B) -> plan review (Loop C) -> implement (Loop D) -> deploy + 30-minute soak to 5 evidence samples per lane (Loop E) -> adversarial ORACLE gate."
+  short-description: "ULTRAWORK super loop (generic workflows + databases): Domain Map pre-flight (all systems, workflows, databases) -> audit (Loop A) -> root cause + plan (Loop B) -> plan review (Loop C) -> implement (Loop D) -> deploy + 30-minute soak to 5 evidence samples per lane (Loop E) -> adversarial ORACLE gate -> 5-lane review -> commit."
 ---
 
 # /ulw — ULTRAWORK super loop (audit → plan → review → execute → soak → prove)
@@ -36,6 +36,8 @@ If the Domain Map is missing, stale, or incomplete, **execute the Domain Map FIR
 Persist the Domain Map as `.omo/state/domain-map.md` plus machine-readable `.omo/state/domain-map.json`, sourced from the domain-modeling outputs where they exist, else repo config, docs, code, codegraph and mem-palace, with an `evidence_ref` per system/workflow/database entry. Never leave the loop's bindings dependent on files this skill does not own.
 
 The Domain Map is the source of truth for Loop A step A's workflow-model bindings. A primitive that is not on the Domain Map is bound during Loop A with evidence or recorded as a blocker — never guessed.
+
+**Activation** — never self-activate for ordinary questions; when a large task would clearly benefit, mention that /ulw is available.
 
 **Prime directives**
 
@@ -102,7 +104,7 @@ Rejected as evidence: agent recollection, summaries without `artifact_path`, "sh
 | `.omo/state/carryforward.json` | pointer set consumed by the next run |
 | `.omo/evidence/<ts>/` | raw captures (test output, diffs, hashes, screenshots) |
 
-Before every compaction step (N, T, Z, AC): flush all of the above, write `carryforward.json`, emit a ≤500-word `.omo/state/handoff.md` a cold agent can resume from, and update mem-palace + codegraph with what this phase produced. A compaction that loses un-flushed state is a run failure.
+Before every compaction step (N, T, Y, AC): flush all of the above, write `carryforward.json`, emit a ≤500-word `.omo/state/handoff.md` a cold agent can resume from, and update mem-palace + codegraph with what this phase produced. A compaction that loses un-flushed state is a run failure.
 
 **Coordinator & role contract**
 
@@ -146,14 +148,13 @@ Thoroughly audit and relentlessly investigate by spawning `(category=Deep)` agen
 
 **Loop B overall rule: do not manually FIX any data or perform system actions — all fixes must be handled via the codebase, and be clear for another LLM to follow and gain a shared understanding.**
 
-## LOOP C — "Start LoopC": plans + review (steps U–Z)
+## LOOP C — "Start LoopC": plans + review (steps U–Y)
 
 - **U)** For each item in the Boulder Plan AND Tools Plan, perform a detailed code-update plan and documentation update. Make the changes surgical; the glossary, architecture, decision records and design updates must be aligned with documented or past updates, easily navigated by another LLM, and codegraph + mem-palace must be aligned with the new changes.
 - **V)** Ensure the code architecture is effective and efficient: reduce duplicate code functions across the codebase and reduce/generalize functions into a separate function or module to reduce code-slop.
 - **W)** Ensure test-driven development methodology is followed: update the testing plan; code testing must be comprehensive and test failures must be anticipated.
 - **X)** Review the testing and code-update plans and identify whether it is justified to complete each item without a basic test or prototype. Where testing is identified, create a Prototyping Plan — a set of conceptual tests or proofs of concept — to ensure the UI, code logic, code structures, data definitions, data models or data flows from the coding/testing updates work.
-- **Y)** Perform reviews on each item of: 1) the code-update plan, 2) the documentation-update plan, 3) the test-update plan, 4) the Prototyping Plan — each with an independently spawned **Metis**. REPEAT Loop C until all plans in the previous step have passed review.
-- **Z)** Compact memory to begin the next phase.
+- **Y)** Perform reviews on each item of: 1) the code-update plan, 2) the documentation-update plan, 3) the test-update plan, 4) the Prototyping Plan — each with an independently spawned **Metis**. REPEAT Loop C until all plans in the previous step have passed review. Then compact memory to begin the next phase (flush state, write handoff).
 
 **Loop C overall rule: be surgical in changes and clear for another LLM to follow and gain a shared understanding.**
 
@@ -171,10 +172,10 @@ Thoroughly audit and relentlessly investigate by spawning `(category=Deep)` agen
 - **AD)** Implement with assistance from sub-agents: 1) the code-update plan, 2) the documentation-update plan, and 3) the test-update plan.
 - **AE)** Run the tests ensuring all tests pass, ensuring sufficient irrefutable evidence is captured for an adversarial review.
 - **AF)** Perform a review yourself and also a code review with an independently spawned skeptical **Hephaestus**.
-- **AG)** Update all previous (A–AE) items into mem-palace and codegraph.
+- **AG)** Update all previous (A–AF) items into mem-palace and codegraph.
 - **AH)** Update any remaining markdown files and changelogs as required. Finally: git push; push container images (only if the repo ships containers); deploy the new code and execute it.
 - **AI)** SLEEP 30 minutes and GATHER irrefutable evidence that the fixes are applied, then repeat from "Start LoopA". Keep looping until you have **5 EACH** of irrefutable evidence showing: 1) that the fixes are working; 2) that every item in the Audit List is resolved; 3) that every item in the Tools Plan is functional and achieving its objective, with evidence that every item in the Target Matrix is progressing correctly and is validated; 4) that the processing/transfer queue is trending down (actual evidence of the number of finished items/files and total size at the final destination); 5) that source items are arriving at the final destination; 6) that Orphaned files are being processed back to the final destination; 7) that there is no sign of data loss and everything is validated before removal; and 8) that the Target Matrix shows stages progressing for each item in the Items List.
-- **AJ)** ONLY THEN verify ALL collected evidence with an adversarial **ORACLE** — ORACLE re-executes the verification scripts and reproduces the artifact hashes; ORACLE reviewing a report is NOT acceptance.
+- **AJ)** ONLY THEN verify ALL collected evidence with an adversarial **ORACLE** — ORACLE re-executes the verification scripts and reproduces the artifact hashes; ORACLE reviewing a report is NOT acceptance. When ORACLE says OKAY, run the **5-lane review** (walk every acceptance lane with its captured evidence samples), commit, and write the final report.
 
 **Loop E overall rule: be surgical in changes and clear for another LLM to follow and gain a shared understanding.**
 
