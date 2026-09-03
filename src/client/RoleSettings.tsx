@@ -22,16 +22,16 @@ import {
   IconChevronDownOutline14, IconCloseOutline16, IconPlusOutline16, Menu,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
-import {
-  loadOmoRoles, modelKey, parseModelKey, postOmoRoleConfig,
-} from './omo-wire.ts'
+import { modelKey, parseModelKey } from './omo-wire.ts'
 import type { OmoCatalogModel, OmoRoleView, OmoRoleConfig } from './omo-wire.ts'
 import type { OmoModelSelection } from './omo-wire.ts'
+import { useOmoRoles } from './use-omo-roles.ts'
+import type { OmoRpcCaller, OmoSettingsScope } from './omo-roles-store.ts'
 
 /** Injected face delivered by the settings-section outlet. */
 export interface RoleSettingsInjected {
-  readonly rolesEndpoint: string
-  readonly roleConfigEndpoint: string
+  readonly scope: OmoSettingsScope
+  readonly rpc: OmoRpcCaller | undefined
   /** Session-independent dsh model catalog (llm.models). */
   readonly loadModels: () => Promise<readonly OmoCatalogModel[]>
 }
@@ -208,13 +208,11 @@ function labelFor(models: readonly OmoCatalogModel[], selection: OmoModelSelecti
  * @returns the settings section content.
  */
 export function RoleSettingsSection({
-  rolesEndpoint, roleConfigEndpoint, loadModels, close,
+  scope, rpc, loadModels, close,
 }: RoleSettingsProps): ReactElement {
-  const [roles, setRoles] = useState<readonly OmoRoleView[]>([])
-  const [configs, setConfigs] = useState<Record<string, OmoRoleConfig>>({})
-  const [defaults, setDefaults] = useState<Record<string, OmoModelSelection | null>>({})
+  const { state, store } = useOmoRoles(scope, rpc, undefined)
   const [models, setModels] = useState<readonly OmoCatalogModel[]>([])
-  const [error, setError] = useState<string | null>(null)
+  const [modelError, setModelError] = useState<string | null>(null)
   const [saving, setSaving] = useState<string | null>(null)
   const [openMenu, setOpenMenu] = useState<string | null>(null)
   const [openFallbackFor, setOpenFallbackFor] = useState<string | null>(null)
@@ -225,23 +223,20 @@ export function RoleSettingsSection({
   void close
 
   useEffect(() => {
-    if (rolesEndpoint === undefined || loadModels === undefined) return
+    if (loadModels === undefined) return
     let stale = false
-    void Promise.all([loadOmoRoles(rolesEndpoint, undefined), loadModels()])
-      .then(([data, catalog]) => {
+    void loadModels()
+      .then((catalog) => {
         if (stale) return
-        setRoles(data.roles)
-        setConfigs(data.configs)
-        setDefaults(data.defaults ?? {})
         setModels(catalog)
-        setError(null)
+        setModelError(null)
       })
       .catch((cause: unknown) => {
         if (stale) return
-        setError(cause instanceof Error ? cause.message : String(cause))
+        setModelError(cause instanceof Error ? cause.message : String(cause))
       })
     return () => { stale = true }
-  }, [rolesEndpoint, loadModels])
+  }, [loadModels])
 
   // A close/cancel without a valid pick must add nothing; outside click or
   // Escape is exactly that cancellation.
@@ -268,35 +263,28 @@ export function RoleSettingsSection({
   })), [models])
 
   const modelLabel = (role: OmoRoleView): string => {
-    const selection = configs[role.id]?.model
+    const selection = state.configs[role.id]?.model
     if (selection !== undefined) {
       return models.find(model => model.provider === selection.provider && model.model === selection.model)?.label
         ?? `${selection.provider}/${selection.model}`
     }
-    const omoDefault = defaults[role.id]
+    const omoDefault = state.defaults[role.id]
     if (omoDefault !== null && omoDefault !== undefined) return `omo 默认 · ${labelFor(models, omoDefault)}`
     return '跟随当前'
   }
 
   const save = (role: OmoRoleView, next: OmoRoleConfig): void => {
-    if (roleConfigEndpoint === undefined) return
     setSaving(role.id)
-    setError(null)
-    void postOmoRoleConfig(roleConfigEndpoint, role.id, next)
-      .then((data) => {
-        if (data.config !== undefined) {
-          setConfigs(previous => ({ ...previous, [role.id]: data.config as OmoRoleConfig }))
-        }
-      })
-      .catch((cause: unknown) => {
-        setError(cause instanceof Error ? cause.message : String(cause))
+    void store.setRoleConfig(role.id, next)
+      .catch(() => {
+        // The store publishes the failure through its error field.
       })
       .finally(() => { setSaving(null) })
   }
 
   const chooseModel = (role: OmoRoleView, id: string): void => {
     setOpenMenu(null)
-    const current = configs[role.id] ?? { fallbackModels: [] }
+    const current = state.configs[role.id] ?? { fallbackModels: [] }
     const selection = id === FOLLOW_SESSION ? undefined : parseModelKey(id)
     if (selection === undefined && id !== FOLLOW_SESSION) return
     const catalog = selection === undefined
@@ -318,7 +306,7 @@ export function RoleSettingsSection({
   }
 
   const chooseEffort = (role: OmoRoleView, effort: string): void => {
-    const current = configs[role.id] ?? { fallbackModels: [] }
+    const current = state.configs[role.id] ?? { fallbackModels: [] }
     const model = current.model
     if (model === undefined) return
     const nextModel: OmoModelSelection = effort === ''
@@ -342,7 +330,7 @@ export function RoleSettingsSection({
 
   const addFallback = (role: OmoRoleView, model: OmoCatalogModel): void => {
     if (saving === role.id) return
-    const current = configs[role.id] ?? { fallbackModels: [] }
+    const current = state.configs[role.id] ?? { fallbackModels: [] }
     const existing = current.fallbackModels ?? []
     if (existing.some(entry => modelKey(entry) === modelKey(model))) {
       setPanelError('该模型已在 fallback 列表中')
@@ -360,7 +348,7 @@ export function RoleSettingsSection({
   }
 
   const removeFallback = (role: OmoRoleView, selection: OmoModelSelection): void => {
-    const current = configs[role.id] ?? { fallbackModels: [] }
+    const current = state.configs[role.id] ?? { fallbackModels: [] }
     const key = modelKey(selection)
     save(role, {
       ...(current.model === undefined ? {} : { model: current.model }),
@@ -375,7 +363,7 @@ export function RoleSettingsSection({
   }, [models, fallbackQuery])
 
   const fallbackChips = (role: OmoRoleView): ReactNode => {
-    const selected = (configs[role.id]?.fallbackModels ?? []) as readonly OmoModelSelection[]
+    const selected = (state.configs[role.id]?.fallbackModels ?? []) as readonly OmoModelSelection[]
     if (selected.length === 0) return null
     return selected.map(entry => (
       <span key={modelKey(entry)} style={STYLE.chip}>
@@ -393,8 +381,8 @@ export function RoleSettingsSection({
     ))
   }
 
-  const roleRows: ReactNode[] = roles.map(role => {
-    const current = configs[role.id]
+  const roleRows: ReactNode[] = state.roles.map(role => {
+    const current = state.configs[role.id]
     const currentModel = current?.model
     const fallbacks = (current?.fallbackModels ?? []) as readonly OmoModelSelection[]
     const chips = fallbackChips(role)
@@ -514,7 +502,7 @@ export function RoleSettingsSection({
       <div style={STYLE.hint}>
         为每个 omo 角色配置主模型与 fallback 模型。主模型选择“跟随当前”时使用该会话当前的模型选择；点击 ＋ 在角色框下方选择 fallback，可连续添加多个，点击取消或空白处关闭不会添加。
       </div>
-      {error !== null && <div style={STYLE.error}>{error}</div>}
+      {(state.error ?? modelError) !== null && <div style={STYLE.error}>{state.error ?? modelError}</div>}
       {roleRows}
     </div>
   )

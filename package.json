@@ -67,6 +67,7 @@
     "@deepseek-ai/dsh-sandbox": "^0.1.1-rc.2",
     "@types/node": "*",
     "@types/react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "tsdown": "^0.22.2",
     "typescript": "^5.7.0"
   }

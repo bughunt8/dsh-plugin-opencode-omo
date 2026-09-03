@@ -7,6 +7,11 @@
  *   composer seat required);
  * - `settings.section`: the global "角色设置" page in the dsh settings panel,
  *   where each omo role's primary model and fallback models are configured.
+ *
+ * Role settings use the hybrid transport: `settingsScope` on loopback, and the
+ * authenticated `/opencode-omo` connection RPC channel when the settings scope
+ * is memory-mode (non-loopback browser). The session model catalog and
+ * selection keep using the existing `remote.session` RPC.
  */
 import type { Context } from '@deepseek-ai/cordis'
 // Type-only: resolves the slots service merge + standard slot kit.
@@ -22,7 +27,9 @@ import { OmoSettingsSection } from './OmoSettingsSection.tsx'
 import type { OmoSettingsSectionProps } from './OmoSettingsSection.tsx'
 import { RoleSettingsSection } from './RoleSettings.tsx'
 import type { RoleSettingsInjected } from './RoleSettings.tsx'
+import { normalizeOmoSettingsSection, OMO_ROLE_SETTINGS_NAMESPACE } from '../core/omo-settings.ts'
 import type { OmoCatalogModel } from './omo-wire.ts'
+import type { OmoRpcCaller, OmoSettingsScope } from './omo-roles-store.ts'
 import type {} from './slots.ts'
 export { RoleSelect } from './RoleSelect.tsx'
 export type { RoleSelectInjected, RoleSelectProps } from './RoleSelect.tsx'
@@ -30,16 +37,13 @@ export { OmoSettingsSection } from './OmoSettingsSection.tsx'
 export type { OmoSettingsSectionProps } from './OmoSettingsSection.tsx'
 export { RoleSettingsSection } from './RoleSettings.tsx'
 export type { RoleSettingsInjected, RoleSettingsProps } from './RoleSettings.tsx'
+export { OMO_ROLE_SETTINGS_NAMESPACE } from '../core/omo-settings.ts'
 
 /** Cordis plugin name. */
 export const name = 'opencode-omo-client'
 
-/** Required services: slot registry + the 0.1.2 session remote (catalog + select). */
-export const inject = ['slots', 'remote', 'remote.session']
-
-export const ROLES_ENDPOINT = '/plugins/@royenheart/dsh-plugin-opencode-omo/roles'
-export const ROLE_ENDPOINT = '/plugins/@royenheart/dsh-plugin-opencode-omo/role'
-export const ROLE_CONFIG_ENDPOINT = '/plugins/@royenheart/dsh-plugin-opencode-omo/role-config'
+/** Required services: slots + settings transport + connection RPC + the session remote. */
+export const inject = ['slots', 'settingsScope', 'connection', 'remote', 'remote.session']
 
 /** RemoteResult face used by `ctx.remote.session` (no `.result` wrapper). */
 type RemoteResult<T> =
@@ -89,14 +93,19 @@ function catalogOf(
 }
 
 /**
- * Mount the composer role seat and the global settings section. The
- * package-level `dsh.client.inject` edges to ui-conversation and
- * ui-settings-general guarantee both SlotMap declarations exist before this
- * plugin applies.
+ * Mount the composer role seat and the global settings section.
  * @param ctx - client root context.
  */
 export function apply(ctx: Context): void {
   const session = ctx.get('remote.session') as SessionRemote
+  const scope = ctx.settingsScope.bind({
+    namespace: OMO_ROLE_SETTINGS_NAMESPACE,
+    decode: normalizeOmoSettingsSection,
+  }) as unknown as OmoSettingsScope
+  const connection = ctx.get('connection') as unknown as {
+    rpc?: OmoRpcCaller
+  } | undefined
+  const rpc = connection?.rpc
 
   const loadModels = async (): Promise<readonly OmoCatalogModel[]> =>
     catalogOf(await session.modelCatalog())
@@ -122,8 +131,8 @@ export function apply(ctx: Context): void {
       label: () => 'opencode-omo',
       inject: (sessionId: SessionId): RoleSelectInjected => ({
         sessionId,
-        rolesEndpoint: ROLES_ENDPOINT,
-        roleEndpoint: ROLE_ENDPOINT,
+        scope,
+        rpc,
         selectModel: selection => selectModel(selection, sessionId),
       }),
     }, RoleSelect))
@@ -144,8 +153,8 @@ export function apply(ctx: Context): void {
       order: 0,
       label: () => '角色设置',
       inject: (): RoleSettingsInjected => ({
-        rolesEndpoint: ROLES_ENDPOINT,
-        roleConfigEndpoint: ROLE_CONFIG_ENDPOINT,
+        scope,
+        rpc,
         loadModels,
       }),
     }, RoleSettingsSection))

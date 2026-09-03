@@ -7,24 +7,33 @@
  * - registers the durable `opencode-omo-roles` settings namespace;
  * - mounts the OmoRoleRegistry service (`ctx.omoRoles`) consumed by the
  *   preset's native-seam loop shim;
- * - serves the small browser surface the client picker/settings use
- *   (role catalog, per-session role, per-role model/fallback config).
+ * - serves the browser surface through an authenticated connection RPC
+ *   channel (`/opencode-omo`): role catalog, per-session role, and per-role
+ *   model/fallback configuration.
  */
-import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import z from '@deepseek-ai/schemastery'
 import { OmoRoleRegistry } from './omo-role-registry.ts'
 import type { OmoRoleRegistryFace } from './omo-role-registry.ts'
-import { OMO_DEFAULT_ROLE, OMO_ROLES, isOmoRole } from './core/omo-roles.ts'
-import type { OmoModelSelection } from './core/omo-roles.ts'
+import { OMO_DEFAULT_ROLE } from './core/omo-roles.ts'
+import { OMO_ROLE_SETTINGS_NAMESPACE } from './core/omo-settings.ts'
+import {
+  OMO_RPC_CHANNEL,
+  OMO_RPC_ENDPOINTS,
+  parseOmoCatalogGetRequest,
+  parseOmoRoleConfigSetRequest,
+  parseOmoRoleSetRequest,
+  type OmoRpcResult,
+} from './core/omo-rpc.ts'
 
 export { OmoRoleRegistry } from './omo-role-registry.ts'
 export type { OmoRoleRegistryFace } from './omo-role-registry.ts'
 export { OMO_DEFAULT_ROLE, OMO_ROLES, emptyRoleConfig, isOmoRole, normalizeOmoRole } from './core/omo-roles.ts'
 export type { OmoModelSelection, OmoRoleConfig, OmoRoleSettings } from './core/omo-roles.ts'
-export { detectDshCompat } from './core/dsh-capabilities.ts'
-export type { DshCompat } from './core/dsh-capabilities.ts'
+export { OMO_RPC_CHANNEL, OMO_RPC_ENDPOINTS } from './core/omo-rpc.ts'
+export type { OmoRpcResult } from './core/omo-rpc.ts'
+export { OMO_ROLE_SETTINGS_NAMESPACE } from './core/omo-settings.ts'
 
 /** Cordis plugin name. */
 export const name = 'opencode-omo'
@@ -32,54 +41,119 @@ export const name = 'opencode-omo'
 /** Required services: settings persistence + the web route registry. Headless benches satisfy the web registry with a standalone webserver row (see tests/benches). */
 export const inject = ['settings', 'webServer']
 
-/** Settings namespace name (lowercase kebab-case). */
-export const OMO_ROLE_SETTINGS_NAMESPACE = 'opencode-omo-roles'
-
-/** Browser-facing routes (exact beats the modules `/plugins` prefix). */
-export const ROLES_ENDPOINT = '/plugins/@royenheart/dsh-plugin-opencode-omo/roles'
-export const ROLE_ENDPOINT = '/plugins/@royenheart/dsh-plugin-opencode-omo/role'
-export const ROLE_CONFIG_ENDPOINT = '/plugins/@royenheart/dsh-plugin-opencode-omo/role-config'
+const optionalString = z.union([z.string(), z.const(undefined)]).default(undefined)
+const optionalNumber = z.union([z.number(), z.const(undefined)]).default(undefined)
 
 const modelSelectionSchema = z.object({
   provider: z.string(),
   model: z.string(),
-  reasoningEffort: z.string(),
+  reasoningEffort: optionalString,
 })
 
-const roleConfigSchema = z.object({
-  model: z.union([modelSelectionSchema, z.const(null)]),
+const optionalModelSelection = z.union([modelSelectionSchema, z.const(undefined)]).default(undefined)
+
+const ultraworkSchema = z.object({
+  model: optionalModelSelection,
+  reasoningEffort: optionalString,
+})
+
+const storedRoleConfigSchema = z.object({
+  model: z.union([modelSelectionSchema, z.const(null), z.const(undefined)]).default(undefined),
   fallbackModels: z.array(modelSelectionSchema).default([]),
-  maxSteps: z.number(),
-  ultrawork: z.object({
-    model: modelSelectionSchema,
-    reasoningEffort: z.string(),
-  }),
+  maxSteps: optionalNumber,
+  ultrawork: z.union([ultraworkSchema, z.const(undefined)]).default(undefined),
 })
 
 /** Runtime schema for the durable settings section. */
 const SettingsSchema = z.object({
-  roles: z.dict(roleConfigSchema).default({}),
+  roles: z.dict(storedRoleConfigSchema).default({}),
   sessions: z.dict(z.string()).default({}),
 })
 
-/** Read a request body as UTF-8 text. */
-function readBody(req: IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = []
-    req.on('data', (chunk: Buffer) => { chunks.push(chunk) })
-    req.on('end', () => { resolve(Buffer.concat(chunks).toString('utf8')) })
-    req.on('error', reject)
-  })
+interface ConnectionRpcFace {
+  rpc?: {
+    handle(channel: string, handler: (endpoint: string, payload: unknown) => Promise<OmoRpcResult>): () => Promise<void>
+  }
 }
 
-function sendJson(res: ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
-  res.end(JSON.stringify(body))
+function badRequest(message: string): OmoRpcResult {
+  return {
+    ok: false,
+    error: {
+      code: 'opencode-omo/bad-request',
+      message,
+      details: {},
+    },
+  }
+}
+
+function badEndpoint(endpoint: string): OmoRpcResult {
+  return {
+    ok: false,
+    error: {
+      code: 'opencode-omo/bad-endpoint',
+      message: `unknown endpoint ${endpoint}`,
+      details: {},
+    },
+  }
+}
+
+/** Dispatch one `/opencode-omo` RPC endpoint. */
+async function handleOmoRpc(
+  roles: OmoRoleRegistryFace,
+  endpoint: string,
+  payload: unknown,
+): Promise<OmoRpcResult> {
+  if (endpoint === OMO_RPC_ENDPOINTS.catalogGet) {
+    const request = parseOmoCatalogGetRequest(payload)
+    if (request === undefined) return badRequest('invalid catalog/get payload')
+    const catalog = roles.roles.map(role => ({ ...role }))
+    return {
+      ok: true,
+      value: {
+        defaultRole: OMO_DEFAULT_ROLE,
+        roles: catalog,
+        configs: roles.configs(),
+        defaults: roles.defaults(),
+        ...(request.sessionId === undefined ? {} : { currentRole: roles.roleFor(request.sessionId) }),
+      },
+    }
+  }
+  if (endpoint === OMO_RPC_ENDPOINTS.roleSet) {
+    const request = parseOmoRoleSetRequest(payload)
+    if (request === undefined) return badRequest('invalid role/set payload')
+    try {
+      await roles.setRole(request.sessionId, request.role)
+      return {
+        ok: true,
+        value: {
+          currentRole: request.role,
+          config: roles.configFor(request.role),
+        },
+      }
+    } catch (error) {
+      return badRequest(error instanceof Error ? error.message : String(error))
+    }
+  }
+  if (endpoint === OMO_RPC_ENDPOINTS.roleConfigSet) {
+    const request = parseOmoRoleConfigSetRequest(payload)
+    if (request === undefined) return badRequest('invalid role-config/set payload')
+    try {
+      await roles.setRoleConfig(request.role, request.config)
+      return {
+        ok: true,
+        value: { config: roles.configFor(request.role) },
+      }
+    } catch (error) {
+      return badRequest(error instanceof Error ? error.message : String(error))
+    }
+  }
+  return badEndpoint(endpoint)
 }
 
 /**
- * Mount the role registry and its HTTP surface.
- * @param ctx - host plugin context carrying settings and httpServer.
+ * Mount the role registry and the authenticated browser RPC channel.
+ * @param ctx - host plugin context carrying settings and webServer.
  */
 export function apply(ctx: Context): void {
   const scope = ctx.settings.register(
@@ -90,148 +164,19 @@ export function apply(ctx: Context): void {
   ctx.plugin(OmoRoleRegistry, { settings: scope })
 
   // The registry service this plugin just mounted becomes injectable once its
-  // fiber is up; the HTTP surface runs in that callback so the route handlers
-  // resolve the same live instance the preset driver reads.
-  ctx.inject(['settings', 'webServer', 'omoRoles'], (hostCtx) => {
+  // fiber is up; the browser RPC surface runs in that callback so handlers
+  // resolve the same live instance the preset driver reads. `connection` is
+  // included so the channel registers only after the connection host service
+  // is active (headless compositions without connection skip this callback).
+  ctx.inject(['settings', 'webServer', 'omoRoles', 'connection'], (hostCtx) => {
     const roles = hostCtx.omoRoles
+    const connection = hostCtx.get('connection') as ConnectionRpcFace | undefined
     hostCtx.effect(() => {
-    const catalog = roles.roles.map(role => ({ ...role }))
-
-    const disposeRoles = ctx.webServer.register({
-      kind: 'exact',
-      path: ROLES_ENDPOINT,
-      handler: (req: IncomingMessage, res: ServerResponse) => {
-        if (req.method !== 'GET' && req.method !== 'HEAD') {
-          sendJson(res, 405, { ok: false, error: 'method not allowed' })
-          return
-        }
-        const url = new URL(req.url ?? '/', 'http://dsh.internal')
-        const sessionId = url.searchParams.get('sessionId')
-        const configs = roles.configs()
-        sendJson(res, 200, {
-          ok: true,
-          defaultRole: OMO_DEFAULT_ROLE,
-          roles: catalog,
-          configs,
-          defaults: roles.defaults(),
-          compat: roles.compat,
-          ...(sessionId === null ? {} : { currentRole: roles.roleFor(sessionId) }),
-        })
-      },
-    })
-
-    const disposeRole = ctx.webServer.register({
-      kind: 'exact',
-      path: ROLE_ENDPOINT,
-      handler: async (req: IncomingMessage, res: ServerResponse) => {
-        if (req.method !== 'POST') {
-          sendJson(res, 405, { ok: false, error: 'method not allowed' })
-          return
-        }
-        let body: { sessionId?: unknown; role?: unknown }
-        try {
-          body = JSON.parse(await readBody(req)) as { sessionId?: unknown; role?: unknown }
-        } catch {
-          sendJson(res, 400, { ok: false, error: 'invalid json' })
-          return
-        }
-        const sessionId = body.sessionId
-        const role = body.role
-        if (typeof sessionId !== 'string' || sessionId === '' || typeof role !== 'string' || !isOmoRole(role)) {
-          sendJson(res, 400, { ok: false, error: 'expected {sessionId: string, role: known omo role}' })
-          return
-        }
-        try {
-          await roles.setRole(sessionId, role)
-          sendJson(res, 200, { ok: true, currentRole: role, config: roles.configFor(role) })
-        } catch (error) {
-          sendJson(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) })
-        }
-      },
-    })
-
-    const disposeRoleConfig = ctx.webServer.register({
-      kind: 'exact',
-      path: ROLE_CONFIG_ENDPOINT,
-      handler: async (req: IncomingMessage, res: ServerResponse) => {
-        if (req.method !== 'POST') {
-          sendJson(res, 405, { ok: false, error: 'method not allowed' })
-          return
-        }
-        let body: {
-          role?: unknown
-          model?: unknown
-          fallbackModels?: unknown
-          maxSteps?: unknown
-          ultrawork?: unknown
-        }
-        try {
-          body = JSON.parse(await readBody(req)) as typeof body
-        } catch {
-          sendJson(res, 400, { ok: false, error: 'invalid json' })
-          return
-        }
-        const role = body.role
-        if (typeof role !== 'string' || !isOmoRole(role)) {
-          sendJson(res, 400, { ok: false, error: 'expected {role: known omo role}' })
-          return
-        }
-        const model = body.model
-        const fallbackModels = body.fallbackModels
-        const isSelection = (value: unknown): value is OmoModelSelection =>
-          typeof value === 'object' && value !== null
-          && typeof (value as OmoModelSelection).provider === 'string'
-          && typeof (value as OmoModelSelection).model === 'string'
-        const cleanSelection = (value: OmoModelSelection): OmoModelSelection => ({
-          provider: value.provider,
-          model: value.model,
-          ...(typeof value.reasoningEffort === 'string' && value.reasoningEffort !== ''
-            ? { reasoningEffort: value.reasoningEffort }
-            : {}),
-        })
-        const ultraworkRaw = body.ultrawork
-        const ultrawork = ultraworkRaw !== null && typeof ultraworkRaw === 'object'
-          ? {
-            ...(isSelection((ultraworkRaw as { model?: unknown }).model)
-              ? { model: cleanSelection((ultraworkRaw as { model: OmoModelSelection }).model) }
-              : {}),
-            ...(typeof (ultraworkRaw as { reasoningEffort?: unknown }).reasoningEffort === 'string'
-              ? { reasoningEffort: (ultraworkRaw as { reasoningEffort: string }).reasoningEffort }
-              : {}),
-          }
-          : undefined
-        const config = {
-          ...(model === null || model === undefined
-            ? {}
-            : isSelection(model)
-              ? { model: cleanSelection(model) }
-              : { __invalid: true as const }),
-          fallbackModels: Array.isArray(fallbackModels)
-            ? fallbackModels.filter(isSelection).map(cleanSelection)
-            : [],
-          ...(typeof body.maxSteps === 'number' && Number.isSafeInteger(body.maxSteps) && body.maxSteps > 0
-            ? { maxSteps: body.maxSteps }
-            : {}),
-          ...(ultrawork === undefined ? {} : { ultrawork }),
-        }
-        if ('__invalid' in config) {
-          sendJson(res, 400, { ok: false, error: 'model must be null or {provider, model}' })
-          return
-        }
-        try {
-          await roles.setRoleConfig(role, config)
-          sendJson(res, 200, { ok: true, config: roles.configFor(role) })
-        } catch (error) {
-          sendJson(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) })
-        }
-      },
-    })
-
-      return () => {
-        disposeRoles()
-        disposeRole()
-        disposeRoleConfig()
-      }
-    }, 'opencode-omo: role routes')
+      if (connection?.rpc === undefined) return () => {}
+      const disposeRpc = connection.rpc.handle(OMO_RPC_CHANNEL, (endpoint, payload) => {
+        return handleOmoRpc(roles, endpoint, payload)
+      })
+      return () => disposeRpc()
+    }, 'opencode-omo: authenticated role rpc')
   })
 }

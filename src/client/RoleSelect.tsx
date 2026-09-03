@@ -2,7 +2,7 @@
  * RoleSelect — the omo agent-type picker occupying dsh's existing
  * `conversation.input.left` composer slot (left tool row, after the
  * access/plan chips). Choosing a role persists it for the session via the
- * host and, when that role pins a primary model, submits the same
+ * hybrid role store and, when that role pins a primary model, submits the same
  * provider/model through the session model RPC so the next step routes there.
  *
  * The trigger styles are copied from ui-conversation's PermissionSelect so the
@@ -11,24 +11,25 @@
  * is injected once from JS — the plugin's CJS client bundle does not ship CSS
  * assets.
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
 import type { SessionId } from '@deepseek-ai/dsh-client-connection/client'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionListState } from '@deepseek-ai/dsh-client-runtime/client'
 import {
-  IconAgentPresetOutline16, IconChevronDownOutline14, IconWarningOutline16, Menu, Toast,
+  IconAgentPresetOutline16, IconChevronDownOutline14, Menu,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
+import { sessionAgentPreset } from './omo-wire.ts'
 import type { OmoModelSelection } from './omo-wire.ts'
-import { loadOmoRoles, postOmoRole, sessionAgentPreset } from './omo-wire.ts'
-import type { OmoRoleView } from './omo-wire.ts'
+import { useOmoRoles } from './use-omo-roles.ts'
+import type { OmoRpcCaller, OmoSettingsScope } from './omo-roles-store.ts'
 
 /** Injected face delivered by the composer-bar outlet. */
 export interface RoleSelectInjected {
   readonly sessionId: SessionId
-  readonly rolesEndpoint: string
-  readonly roleEndpoint: string
+  readonly scope: OmoSettingsScope
+  readonly rpc: OmoRpcCaller | undefined
   readonly selectModel: (selection: OmoModelSelection) => Promise<boolean>
 }
 
@@ -117,16 +118,12 @@ function installTriggerStyles(): void {
  * @returns the picker element.
  */
 export function RoleSelect({
-  sessionId, useSessions, locked = false, rolesEndpoint, roleEndpoint, selectModel,
+  sessionId, useSessions, locked = false, scope, rpc, selectModel,
 }: RoleSelectProps): ReactElement | null {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [roles, setRoles] = useState<readonly OmoRoleView[]>([])
-  const [currentRole, setCurrentRole] = useState<string>('sisyphus')
-  // Transient dsh-compat warning; keyed seq restarts the same text on re-show.
-  const [notice, setNotice] = useState<{ seq: number; text: string } | null>(null)
-  const noticeSeq = useRef(0)
+  const [localError, setLocalError] = useState<string | null>(null)
+  const { state, store } = useOmoRoles(scope, rpc, sessionId)
 
   const summary = useSessions?.(state => (sessionId === undefined ? undefined : state.byId[sessionId]))
   const eligible = sessionAgentPreset(summary) === OMO_PRESET
@@ -134,63 +131,35 @@ export function RoleSelect({
   useEffect(() => { installTriggerStyles() }, [])
 
   useEffect(() => {
-    if (!eligible || sessionId === undefined || rolesEndpoint === undefined) return
-    let stale = false
-    loadOmoRoles(rolesEndpoint, sessionId)
-      .then((data) => {
-        if (stale) return
-        // omo's composer type selector exposes primary/all agents; specialist
-        // subagents stay delegation-only (the global settings page edits all).
-        setRoles(data.roles.filter(role => role.mode !== 'subagent'))
-        setCurrentRole(data.currentRole ?? data.defaultRole)
-        setError(null)
-        const warnings = data.compat?.warnings ?? []
-        if (warnings.length > 0) {
-          const key = `opencode-omo:compat:${warnings.join('|')}`
-          let seen: string | null = null
-          try { seen = sessionStorage.getItem(key) } catch { /* storage unavailable */ }
-          if (seen === null) {
-            try { sessionStorage.setItem(key, 'shown') } catch { /* storage unavailable */ }
-            noticeSeq.current += 1
-            setNotice({ seq: noticeSeq.current, text: warnings.join(' ') })
-          }
-        }
-      })
-      .catch((cause: unknown) => {
-        if (stale) return
-        setError(cause instanceof Error ? cause.message : String(cause))
-      })
-    return () => { stale = true }
-  }, [eligible, rolesEndpoint, sessionId])
-
-  useEffect(() => {
     if (!locked && open) return
     setOpen(false)
   }, [locked, open])
 
-  if (!eligible || sessionId === undefined || rolesEndpoint === undefined || roleEndpoint === undefined) return null
+  if (!eligible || sessionId === undefined || scope === undefined) return null
 
+  const roles = state.roles.filter(role => role.mode !== 'subagent')
+  const currentRole = state.currentRole
   const current = roles.find(role => role.id === currentRole)
   const label = current?.displayName ?? currentRole
+  const error = localError ?? state.error
 
   const choose = (id: string): void => {
     setOpen(false)
     if (id === currentRole || busy) return
     setBusy(true)
-    setError(null)
-    void postOmoRole(roleEndpoint, sessionId, id)
-      .then((data) => {
-        setCurrentRole(data.currentRole ?? id)
-        const model = data.config?.model
+    setLocalError(null)
+    void store.setRole(sessionId, id)
+      .then(() => {
+        const model = state.configs[id]?.model
         if (model !== undefined && selectModel !== undefined) {
           return selectModel(model).then((accepted) => {
-            if (!accepted) setError(`角色已切换，但模型 ${model.provider}/${model.model} 不可用`)
+            if (!accepted) setLocalError(`角色已切换，但模型 ${model.provider}/${model.model} 不可用`)
           })
         }
         return undefined
       })
       .catch((cause: unknown) => {
-        setError(cause instanceof Error ? cause.message : String(cause))
+        setLocalError(cause instanceof Error ? cause.message : String(cause))
       })
       .finally(() => { setBusy(false) })
   }
@@ -198,42 +167,32 @@ export function RoleSelect({
   const items: MenuEntry[] = roles.map(role => ({ id: role.id, label: role.displayName }))
 
   return (
-    <>
-      {notice !== null && (
-        <Toast
-          key={notice.seq}
-          text={notice.text}
-          icon={<IconWarningOutline16 />}
-          onDone={() => { setNotice(null) }}
-        />
+    <Menu
+      open={open && !locked}
+      items={items}
+      selectedId={currentRole}
+      onSelect={choose}
+      onClose={() => { setOpen(false) }}
+      side="top"
+      anchor={(
+        <button
+          type="button"
+          className="omo-role-select-trigger"
+          aria-label={`角色：${label}`}
+          title={error ?? current?.description ?? label}
+          disabled={locked || busy || roles.length === 0}
+          onClick={() => { setOpen(!open) }}
+        >
+          <span className="omo-role-select-trigger-icon" aria-hidden>
+            <IconAgentPresetOutline16 />
+          </span>
+          <span className="omo-role-select-trigger-label">{label}</span>
+          <span className={`omo-role-select-chevron${open ? ' omo-role-select-chevron-open' : ''}`} aria-hidden>
+            <IconChevronDownOutline14 />
+          </span>
+        </button>
       )}
-      <Menu
-        open={open && !locked}
-        items={items}
-        selectedId={currentRole}
-        onSelect={choose}
-        onClose={() => { setOpen(false) }}
-        side="top"
-        anchor={(
-          <button
-            type="button"
-            className="omo-role-select-trigger"
-            aria-label={`角色：${label}`}
-            title={error ?? current?.description ?? label}
-            disabled={locked || busy || roles.length === 0}
-            onClick={() => { setOpen(!open) }}
-          >
-            <span className="omo-role-select-trigger-icon" aria-hidden>
-              <IconAgentPresetOutline16 />
-            </span>
-            <span className="omo-role-select-trigger-label">{label}</span>
-            <span className={`omo-role-select-chevron${open ? ' omo-role-select-chevron-open' : ''}`} aria-hidden>
-              <IconChevronDownOutline14 />
-            </span>
-          </button>
-        )}
-      />
-    </>
+    />
   )
 }
 

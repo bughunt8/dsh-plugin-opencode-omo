@@ -1,8 +1,7 @@
 /**
  * Browser wire vocabulary for the opencode-omo role surface. Pure types and
- * small JSON helpers shared by the composer RoleSelect and the header
- * RoleSettings modal — no cordis imports, so both are bundled by the client
- * half only.
+ * small helpers shared by the composer RoleSelect and the settings
+ * RoleSettings — no cordis imports, so both are bundled by the client half.
  */
 import type { OmoModelSelection, OmoRoleConfig } from '../core/omo-roles.ts'
 
@@ -17,40 +16,18 @@ export interface OmoRoleView {
   readonly fallbackHint: string
 }
 
-/** dsh-side seam support detected by the host plugin at load. */
-export interface OmoCompat {
-  readonly assistantPrefill: boolean
-  readonly maxStepsMode: 'assistant-prefill' | 'system-prompt-section' | 'disabled'
-  readonly warnings: readonly string[]
-  readonly detectionFailed: boolean
-}
-
-/** GET /plugins/.../roles response. */
-export interface OmoRolesResponse {
-  readonly ok: boolean
-  readonly error?: string
+/** Reactive snapshot exposed by the client role store. */
+export interface OmoRolesState {
   readonly defaultRole: string
   readonly roles: readonly OmoRoleView[]
   readonly configs: Record<string, OmoRoleConfig>
+  readonly sessions: Record<string, string>
   /** Catalog-resolved omo default primary per role (null = none available). */
   readonly defaults: Record<string, OmoModelSelection | null>
-  readonly compat?: OmoCompat
-  readonly currentRole?: string
-}
-
-/** POST /plugins/.../role response. */
-export interface OmoRoleResponse {
-  readonly ok: boolean
-  readonly error?: string
-  readonly currentRole?: string
-  readonly config?: OmoRoleConfig
-}
-
-/** POST /plugins/.../role-config response. */
-export interface OmoRoleConfigResponse {
-  readonly ok: boolean
-  readonly error?: string
-  readonly config?: OmoRoleConfig
+  readonly currentRole: string
+  readonly loading: boolean
+  readonly degraded: boolean
+  readonly error: string | null
 }
 
 /** One adapter-owned reasoning effort choice. */
@@ -94,52 +71,4 @@ export function sessionAgentPreset(summary: SessionPresetSummary | undefined): s
   if (typeof projected === 'string' && projected !== '') return projected
   if (typeof summary?.agentPreset === 'string' && summary.agentPreset !== '') return summary.agentPreset
   return undefined
-}
-
-/** Ask the host for the role catalog plus one session's current role. */
-export async function loadOmoRoles(
-  endpoint: string,
-  sessionId: string | undefined,
-): Promise<OmoRolesResponse> {
-  const suffix = sessionId === undefined ? '' : `?sessionId=${encodeURIComponent(sessionId)}`
-  const response = await fetch(`${endpoint}${suffix}`, { headers: { accept: 'application/json' } })
-  const data = await response.json() as OmoRolesResponse
-  if (!data.ok) throw new Error(data.error ?? `HTTP ${response.status}`)
-  return data
-}
-
-/** Persist the selected role for one session. */
-export async function postOmoRole(
-  endpoint: string,
-  sessionId: string,
-  role: string,
-): Promise<OmoRoleResponse> {
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ sessionId, role }),
-  })
-  const data = await response.json() as OmoRoleResponse
-  if (!data.ok) throw new Error(data.error ?? `HTTP ${response.status}`)
-  return data
-}
-
-/** Persist one role's model/fallback configuration. */
-export async function postOmoRoleConfig(
-  endpoint: string,
-  role: string,
-  config: OmoRoleConfig,
-): Promise<OmoRoleConfigResponse> {
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      role,
-      model: config.model ?? null,
-      fallbackModels: config.fallbackModels,
-    }),
-  })
-  const data = await response.json() as OmoRoleConfigResponse
-  if (!data.ok) throw new Error(data.error ?? `HTTP ${response.status}`)
-  return data
 }

@@ -5,25 +5,22 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { SessionId } from '@deepseek-ai/dsh-client-connection/client'
 import type { OmoModelSelection } from '../core/omo-roles'
+import type { OmoRpcCaller, OmoSettingsScope } from './omo-roles-store'
 
 export declare const name: string
-export declare const inject: ['slots', 'remote', 'remote.session']
+export declare const inject: ['slots', 'settingsScope', 'connection', 'remote', 'remote.session']
 export declare function apply(ctx: Context): void
-
-export declare const ROLES_ENDPOINT: string
-export declare const ROLE_ENDPOINT: string
-export declare const ROLE_CONFIG_ENDPOINT: string
 
 export interface RoleSelectInjected {
   readonly sessionId: SessionId
-  readonly rolesEndpoint: string
-  readonly roleEndpoint: string
+  readonly scope: OmoSettingsScope
+  readonly rpc: OmoRpcCaller | undefined
   readonly selectModel: (selection: OmoModelSelection) => Promise<boolean>
 }
 
 export interface RoleSettingsInjected {
-  readonly rolesEndpoint: string
-  readonly roleConfigEndpoint: string
+  readonly scope: OmoSettingsScope
+  readonly rpc: OmoRpcCaller | undefined
   readonly loadModels: () => Promise<readonly {
     provider: string
     model: string
