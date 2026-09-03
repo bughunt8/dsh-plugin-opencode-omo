@@ -104,21 +104,30 @@ export function normalizeRoleConfig(config: OmoRoleConfig): StoredOmoRoleConfig 
     ? config.maxSteps
     : undefined
   const ultraworkInput = config.ultrawork
-  const ultrawork: OmoUltraworkOverride | undefined = ultraworkInput !== null && typeof ultraworkInput === 'object'
+  const ultraworkModel = ultraworkInput !== null && typeof ultraworkInput === 'object'
+    ? (ultraworkInput as OmoUltraworkOverride).model
+    : undefined
+  // Legacy profiles may store `ultrawork: { model: {} }`. Treat an invalid
+  // ultrawork model as "no override" instead of failing the write; the same
+  // tolerance lets a raw catalog config round-trip without being rejected.
+  const ultrawork = ultraworkInput !== null && typeof ultraworkInput === 'object'
     ? {
-      ...(ultraworkInput.model === undefined || ultraworkInput.model === null
-        ? {}
-        : { model: normalizeModel(ultraworkInput.model) }),
+      ...(ultraworkModel !== undefined && ultraworkModel !== null && typeof ultraworkModel === 'object'
+        && typeof ultraworkModel.provider === 'string' && ultraworkModel.provider !== ''
+        && typeof ultraworkModel.model === 'string' && ultraworkModel.model !== ''
+        ? { model: normalizeModel(ultraworkModel) }
+        : {}),
       ...(typeof ultraworkInput.reasoningEffort === 'string' && ultraworkInput.reasoningEffort !== ''
         ? { reasoningEffort: ultraworkInput.reasoningEffort }
         : {}),
     }
     : undefined
+  const cleanedUltrawork = ultrawork !== undefined && Object.keys(ultrawork).length > 0 ? ultrawork : undefined
   return {
     model,
     fallbackModels,
     ...(maxSteps === undefined ? {} : { maxSteps }),
-    ...(ultrawork === undefined ? {} : { ultrawork }),
+    ...(cleanedUltrawork === undefined ? {} : { ultrawork: cleanedUltrawork }),
   }
 }
 

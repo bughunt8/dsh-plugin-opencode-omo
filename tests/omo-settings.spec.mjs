@@ -8,6 +8,7 @@ import assert from 'node:assert/strict'
 import {
   normalizeOmoSettingsSection,
   OMO_ROLE_SETTINGS_NAMESPACE,
+  sanitizeStoredRoleConfigs,
 } from '../src/core/omo-settings.ts'
 import {
   OMO_RPC_CHANNEL,
@@ -16,6 +17,7 @@ import {
   parseOmoRoleConfigSetRequest,
   parseOmoRoleSetRequest,
 } from '../src/core/omo-rpc.ts'
+import { normalizeRoleConfig } from '../src/omo-role-registry.ts'
 
 test('settings namespace is the stable id', () => {
   assert.equal(OMO_ROLE_SETTINGS_NAMESPACE, 'opencode-omo-roles')
@@ -56,6 +58,37 @@ test('normalizeOmoSettingsSection tolerates missing and malformed input', () => 
   assert.equal(section.roles['sisyphus'].model, undefined)
   assert.deepEqual(section.roles['sisyphus'].fallbackModels, [])
   assert.deepEqual(section.sessions, {})
+})
+
+test('sanitizeStoredRoleConfigs drops only malformed ultrawork.model', () => {
+  const result = sanitizeStoredRoleConfigs({
+    sisyphus: {
+      model: { provider: 'openai', model: 'gpt-5.5' },
+      fallbackModels: [{ provider: 'openai', model: 'gpt-5.4' }],
+      ultrawork: { model: {} },
+    },
+    atlas: { fallbackModels: [] },
+    prometheus: {
+      fallbackModels: [],
+      ultrawork: { model: { provider: 'openai', model: 'gpt-5.6' }, reasoningEffort: 'high' },
+    },
+  })
+  assert.deepEqual(result.changedRoleIds, ['sisyphus'])
+  assert.equal(result.roles['sisyphus'].ultrawork, undefined)
+  assert.deepEqual(result.roles['atlas'], { fallbackModels: [] })
+  assert.deepEqual(result.roles['prometheus'].ultrawork, {
+    model: { provider: 'openai', model: 'gpt-5.6' },
+    reasoningEffort: 'high',
+  })
+})
+
+test('normalizeRoleConfig tolerates legacy empty ultrawork.model', () => {
+  const config = normalizeRoleConfig({
+    fallbackModels: [{ provider: 'openai', model: 'gpt-5.4' }],
+    ultrawork: { model: {} },
+  })
+  assert.equal(config.ultrawork, undefined)
+  assert.equal(config.fallbackModels.length, 1)
 })
 
 test('rpc channel is a single-segment logical channel', () => {

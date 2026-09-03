@@ -17,7 +17,7 @@ import z from '@deepseek-ai/schemastery'
 import { OmoRoleRegistry } from './omo-role-registry.ts'
 import type { OmoRoleRegistryFace } from './omo-role-registry.ts'
 import { OMO_DEFAULT_ROLE } from './core/omo-roles.ts'
-import { OMO_ROLE_SETTINGS_NAMESPACE } from './core/omo-settings.ts'
+import { OMO_ROLE_SETTINGS_NAMESPACE, sanitizeStoredRoleConfigs } from './core/omo-settings.ts'
 import {
   OMO_RPC_CHANNEL,
   OMO_RPC_ENDPOINTS,
@@ -161,6 +161,26 @@ export function apply(ctx: Context): void {
     SettingsSchema,
     { applies: 'live' },
   )
+
+  // Self-heal legacy malformed role settings once per boot. Older profiles
+  // stored `ultrawork: { model: {} }`; drop that invalid model so later writes
+  // never fail and the raw catalog can round-trip.
+  try {
+    const current = scope.get()
+    const cleaned = sanitizeStoredRoleConfigs(current.roles)
+    if (cleaned.changedRoleIds.length > 0) {
+      void scope.update({ roles: cleaned.roles })
+        .then(() => {
+          ctx.logger?.warn(`opencode-omo: cleaned malformed role settings for roles: ${cleaned.changedRoleIds.join(', ')}`)
+        })
+        .catch((error: unknown) => {
+          ctx.logger?.warn('opencode-omo: failed to clean malformed role settings', error)
+        })
+    }
+  } catch (error) {
+    ctx.logger?.warn('opencode-omo: role settings self-heal skipped', error)
+  }
+
   ctx.plugin(OmoRoleRegistry, { settings: scope })
 
   // The registry service this plugin just mounted becomes injectable once its

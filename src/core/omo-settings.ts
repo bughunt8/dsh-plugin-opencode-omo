@@ -13,7 +13,7 @@
  * unit tests share one source of truth with no dsh imports.
  */
 
-import { isOmoRole, type OmoModelSelection, type OmoRoleConfig, type OmoUltraworkOverride } from './omo-roles.ts'
+import { isOmoRole, type OmoModelSelection, type OmoRoleConfig, type OmoUltraworkOverride, type StoredOmoRoleConfig } from './omo-roles.ts'
 
 /** Settings namespace id registered with `ctx.settings` / bound on the client. */
 export const OMO_ROLE_SETTINGS_NAMESPACE = 'opencode-omo-roles'
@@ -99,4 +99,58 @@ export function normalizeOmoSettingsSection(raw: unknown): OmoSettingsSection {
     roles: normalizeRoles(raw.roles),
     sessions: normalizeSessions(raw.sessions),
   }
+}
+
+function hasModelSelectionShape(value: unknown): value is OmoModelSelection {
+  if (!isRecord(value)) return false
+  const provider = value.provider
+  const model = value.model
+  return typeof provider === 'string' && provider !== '' && typeof model === 'string' && model !== ''
+}
+
+/**
+ * Sanitize ONE stored role config for legacy malformed shapes. The only
+ * mutation performed is dropping an `ultrawork.model` that is present but is
+ * not a valid provider/model pair (older settings contain `"model": {}`).
+ * Everything else is preserved exactly as stored.
+ */
+function sanitizeStoredRoleConfig(raw: unknown): { config: StoredOmoRoleConfig; changed: boolean } {
+  const base: Record<string, unknown> = isRecord(raw) ? { ...raw } : {}
+  let changed = false
+
+  if (isRecord(base.ultrawork)) {
+    const ultrawork: Record<string, unknown> = { ...base.ultrawork }
+    if (ultrawork.model !== undefined && ultrawork.model !== null && !hasModelSelectionShape(ultrawork.model)) {
+      delete ultrawork.model
+      changed = true
+    }
+    if (Object.keys(ultrawork).length === 0) {
+      delete base.ultrawork
+      changed = true
+    } else {
+      base.ultrawork = ultrawork
+    }
+  }
+
+  return { config: base as unknown as StoredOmoRoleConfig, changed }
+}
+
+/**
+ * Sanitize a full stored roles map and report which role ids were changed.
+ * Used by the host self-heal to clean legacy `ultrawork.model: {}` entries
+ * once, without dropping unknown roles or unrelated fields.
+ */
+export function sanitizeStoredRoleConfigs(raw: unknown): {
+  roles: Record<string, StoredOmoRoleConfig>
+  changedRoleIds: string[]
+} {
+  const roles: Record<string, StoredOmoRoleConfig> = {}
+  const changedRoleIds: string[] = []
+  if (!isRecord(raw)) return { roles, changedRoleIds }
+  for (const [role, config] of Object.entries(raw)) {
+    const sanitized = sanitizeStoredRoleConfig(config)
+    roles[role] = sanitized.config
+    if (sanitized.changed) changedRoleIds.push(role)
+  }
+  return { roles, changedRoleIds }
 }
