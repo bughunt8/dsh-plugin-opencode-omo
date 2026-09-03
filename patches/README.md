@@ -31,9 +31,6 @@ Keep these in mind when comparing traces or benches:
    stats still omit it.
 4. **No silent drop.** The ceiling still fires at `step >= maxSteps`. Only the
    channel changed.
-5. **Optional leftover seam.** If a developer harness still contains
-   `assistantPrefill` in `@deepseek-ai/dsh-agent-loop`, the driver uses it.
-   That is not supported or documented as an install step.
 
 Upstream request for a general-purpose request-only assistant tail:
 https://github.com/deepseek-ai/deepseek-harness/discussions/2407

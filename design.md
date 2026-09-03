@@ -19,7 +19,7 @@ seam:
 | Suppress harness identity + runtime snapshot | `complete: true` + `ctx.systemPrompt.suppressRuntimeContext()` |
 | opencode per-model tool gating (apply_patch vs edit/write) | `system-prompt/assemble` waterfall mutates `assembly.tools` |
 | Ultrawork keyword detection before assembly | `agent/inbox/claimed` (fires inside `preStep` before `systemPrompt.assemble`) |
-| maxSteps + verbatim MAX_STEPS_PROMPT | system-prompt section on stock 0.1.2; leftover local `assistantPrefill` is still used if present |
+| maxSteps + verbatim MAX_STEPS_PROMPT | system-prompt section on stock 0.1.2 (the only supported path) |
 | Role primary model + ultrawork override | `agent/request` waterfall |
 | Fallback chain before harness retry policy | `agent/request-error` waterfall returning `{ kind: 'retry' }` |
 
@@ -33,15 +33,15 @@ ultrawork routing all fire with a plain `ReactLoopAgent`.
 ## Current fidelity posture (dsh 0.1.2-alpha.2)
 
 1. `PreStepDecision.assistantPrefill` is still absent upstream. This plugin
-   **no longer ships** a local patch for it. `MAX_STEPS_PROMPT` is a
-   system-prompt section on the ceiling step (same text and trigger as
-   opencode; different role). Upstream:
+   **no longer ships** a local patch for it and no longer detects a leftover
+   seam. `MAX_STEPS_PROMPT` is a system-prompt section on the ceiling step
+   (same text and trigger as opencode; different role). Upstream:
    https://github.com/deepseek-ai/deepseek-harness/discussions/2407
 
-   Behavioral gaps vs opencode / a leftover patched harness: assistant vs
-   system role, token placement, and reconstructable-requests (live assembly
-   vs `request/header`). Transcript/stats/compaction still omit the ceiling
-   text. Nothing is silently dropped.
+   Behavioral gaps vs opencode: assistant vs system role, token placement, and
+   reconstructable-requests (live assembly vs `request/header`).
+   Transcript/stats/compaction still omit the ceiling text. Nothing is
+   silently dropped.
 
 2. The complete persona text provider has no turn/step argument. The step about
    to run is inferred from the durable log (`turn/start` + last `step/start`),

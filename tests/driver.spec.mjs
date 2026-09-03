@@ -9,7 +9,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fallbackRetryable, gateToolCall, maxStepsDecisionFor, maxStepsPrefillFor, opencodeUsesPatch, persistPlanFile, systemPromptFor } from '../presets/opencode-omo/driver.mjs'
+import { fallbackRetryable, gateToolCall, opencodeUsesPatch, persistPlanFile, systemPromptFor } from '../presets/opencode-omo/driver.mjs'
 import { renderRulesFor } from '../presets/opencode-omo/rules.mjs'
 
 function roleFace(role = 'sisyphus') {
@@ -197,16 +197,6 @@ test('hephaestus GPT-5.6 hyphen id uses the gpt-5-6 variant', () => {
   }
 })
 
-test('maxSteps prefill is an assistant-role model message with verbatim opencode text', () => {
-  const agent = mockAgent(process.cwd(), [], 'gpt-5.5')
-  const prefill = maxStepsPrefillFor(agent)
-  assert.equal(prefill.role, 'assistant')
-  assert.equal(prefill.source.kind, 'model')
-  assert.equal(prefill.source.model, 'gpt-5.5')
-  assert.match(prefill.content[0].text, /CRITICAL - MAXIMUM STEPS REACHED/)
-  assert.match(prefill.content[0].text, /Respond with text ONLY\./)
-})
-
 test('unknown model families use the omo dynamic Sisyphus fallback prompt', () => {
   const cwd = mkdtempSync(join(tmpdir(), 'omo-fallback-'))
   try {
@@ -220,31 +210,7 @@ test('unknown model families use the omo dynamic Sisyphus fallback prompt', () =
   }
 })
 
-test('maxSteps decision keeps the assistant prefill on a patched harness', () => {
-  const agent = mockAgent(process.cwd(), [], 'gpt-5.5')
-  const decision = maxStepsDecisionFor(
-    { kind: 'enter', messages: [], assembly: {} },
-    agent,
-    { compat: { assistantPrefill: true } },
-  )
-  assert.equal(decision.assistantPrefill?.role, 'assistant')
-  assert.equal(decision.messages.length, 0)
-})
-
-test('maxSteps decision passes through unchanged without the dsh patch', () => {
-  // Without the assistantPrefill seam the same text rides the system prompt
-  // (maxStepsSectionFor), so the pre-step decision is left untouched.
-  const agent = mockAgent(process.cwd(), [], 'gpt-5.5')
-  const decision = maxStepsDecisionFor(
-    { kind: 'enter', messages: [], assembly: {} },
-    agent,
-    { compat: { assistantPrefill: false } },
-  )
-  assert.equal(decision.assistantPrefill, undefined)
-  assert.equal(decision.messages.length, 0)
-})
-
-test('maxSteps section appears in the system prompt at the ceiling on a patchless harness', () => {
+test('maxSteps section appears in the system prompt at the ceiling on stock 0.1.2', () => {
   const cwd = mkdtempSync(join(tmpdir(), 'omo-maxsteps-'))
   try {
     // step counting: nextPosition = last step/start + 1; three starts propose step 4.
@@ -254,7 +220,7 @@ test('maxSteps section appears in the system prompt at the ceiling on a patchles
       { type: 'step/start', data: { turn: 1, step: 2 } },
       { type: 'step/start', data: { turn: 1, step: 3 } },
     ]
-    const roles = { ...roleFace(), compat: { assistantPrefill: false }, configFor: () => ({ maxSteps: 4, fallbackModels: [] }) }
+    const roles = { ...roleFace(), configFor: () => ({ maxSteps: 4, fallbackModels: [] }) }
     const ctx = { tools: { schemas: () => [] } }
     const prompt = systemPromptFor(ctx, roles, mockState(), mockAgent(cwd, events))
     assert.match(prompt, /CRITICAL - MAXIMUM STEPS REACHED/)
@@ -262,11 +228,6 @@ test('maxSteps section appears in the system prompt at the ceiling on a patchles
     // Below the ceiling the section is absent.
     const below = systemPromptFor(ctx, roles, mockState(), mockAgent(cwd, events.slice(0, 3)))
     assert.doesNotMatch(below, /CRITICAL - MAXIMUM STEPS REACHED/)
-
-    // A patched harness never renders the section (the prefill carries it).
-    const patched = { ...roleFace(), compat: { assistantPrefill: true }, configFor: () => ({ maxSteps: 4, fallbackModels: [] }) }
-    const patchedPrompt = systemPromptFor(ctx, patched, mockState(), mockAgent(cwd, events))
-    assert.doesNotMatch(patchedPrompt, /CRITICAL - MAXIMUM STEPS REACHED/)
   } finally {
     rmSync(cwd, { recursive: true, force: true })
   }

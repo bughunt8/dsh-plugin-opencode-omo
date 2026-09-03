@@ -99,7 +99,7 @@ These are intentional and will not match stock opencode until [discussion #2407]
 | Token placement | Extra assistant tokens on that request | Extra system tokens on that request |
 | Reconstructable-requests | Logged on `request/header` | Rebuilt from the live prompt assembly |
 
-The host still scans `@deepseek-ai/dsh-agent-loop` for a compiled `assistantPrefill` marker. If you run a **local** harness that still has the old seam, the driver uses the assistant tail automatically. The `/roles` payload's `compat.warnings` and a one-shot browser Toast describe the system-prompt path; they no longer tell you to apply a patch from this repo.
+The plugin no longer scans the installed `@deepseek-ai/dsh-agent-loop` for a leftover `assistantPrefill` marker and no longer serves `compat.warnings` to the browser. Stock 0.1.2 is the only supported path; a local harness with the old seam simply uses the same system-prompt section.
 
 Provider-visible `format`/`toolChoice` remains an unpatched proposal; omo's regular path does not use it.
 
