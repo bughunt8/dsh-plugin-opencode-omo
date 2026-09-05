@@ -13,6 +13,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
+import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 import z from '@deepseek-ai/schemastery'
 import { OmoRoleRegistry } from './omo-role-registry.ts'
 import type { OmoRoleRegistryFace } from './omo-role-registry.ts'
@@ -33,7 +34,7 @@ export const name = 'opencode-omo'
 export const inject = ['settings', 'webServer']
 
 /** Settings namespace name (lowercase kebab-case). */
-export const OMO_ROLE_SETTINGS_NAMESPACE = 'opencode-omo-roles'
+export const OMO_ROLE_SETTINGS_NAMESPACE = settingsNamespace('opencode-omo-roles')
 
 /** Browser-facing routes (exact beats the modules `/plugins` prefix). */
 export const ROLES_ENDPOINT = '/plugins/@royenheart/dsh-plugin-opencode-omo/roles'

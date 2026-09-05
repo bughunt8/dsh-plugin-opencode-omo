@@ -48,6 +48,13 @@
 - id: lsp
   name: cordis:group
   group: true
+  # Graceful degradation: dsh releases that ship no LSP packages (0.1.2-rc.1
+  # has neither @deepseek-ai/dsh-lsp-stdio nor @deepseek-ai/dsh-tool-lsp)
+  # would otherwise fail this group's import and abort the whole preset mount,
+  # which surfaces as "new session" failing. Resolve from the running dsh
+  # binary; when either package is missing the group disables itself and the
+  # mode still loads without the lsp_* tools.
+  disabled: !!js '(function () { try { const { createRequire } = process.getBuiltinModule("node:module"); const req = createRequire(process.argv[1] ?? `${process.cwd()}/`); req.resolve("@deepseek-ai/dsh-lsp-stdio"); req.resolve("@deepseek-ai/dsh-tool-lsp"); return false } catch { return true } })()'
   isolate:
     lsp: true
   config:
