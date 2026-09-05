@@ -46,25 +46,32 @@ const familyPromptCache = new Map()
 const planPromptCache = new Map()
 const rolePromptCache = new Map()
 const personaCache = new Map()
+/** dsh 0.1.2 keeps the log private; older runtimes expose the event array. */
+function sessionEvents(session) {
+  if (typeof session.snapshotEvents === 'function') return session.snapshotEvents()
+  if (Array.isArray(session.events)) return session.events
+  throw new TypeError('opencode-omo: session has no supported event-log reader')
+}
 
 /** dsh folds plan mode from the durable `plan/mode` event stream. */
 function planModeActive(session) {
-  const event = session.events.findLast(item => item.type === 'plan/mode')
+  const event = sessionEvents(session).findLast(item => item.type === 'plan/mode')
   return event?.data?.active === true
 }
 
 /** Plan state at the last logged request header (mirrors dsh plan-mode narration). */
 function planModeAtLastHeader(session) {
+  const events = sessionEvents(session)
   let lastHeader = -1
   let index = 0
-  for (const event of session.events) {
+  for (const event of events) {
     if (event.type === 'request/header') lastHeader = index
     index += 1
   }
   if (lastHeader < 0) return undefined
   let active
   for (index = 0; index < lastHeader; index += 1) {
-    const event = session.events[index]
+    const event = events[index]
     if (event?.type === 'plan/mode') active = event.data?.active === true
   }
   return active
@@ -708,17 +715,18 @@ function messageText(message) {
 
 /** Infer the current turn/step from the durable log (0 when no step has started yet). */
 function currentPosition(session) {
+  const events = sessionEvents(session)
   let turn = 0
   let lastStep = 0
-  for (let index = session.events.length - 1; index >= 0; index -= 1) {
-    const event = session.events[index]
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]
     if (event?.type === 'turn/start') {
       turn = event.data.turn ?? 0
       break
     }
   }
-  for (let index = session.events.length - 1; index >= 0; index -= 1) {
-    const event = session.events[index]
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]
     if (event?.type === 'step/start' && event.data.turn === turn) {
       lastStep = event.data.step ?? 0
       break

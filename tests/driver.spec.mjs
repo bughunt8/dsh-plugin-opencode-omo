@@ -26,7 +26,7 @@ function mockAgent(cwd, events = [], model = 'deepseek-v4') {
     session: {
       id: 'session-test',
       header: { cwd, createdAt: 1234567890 },
-      events,
+      snapshotEvents: () => events.slice(),
     },
     options: { provider: 'deepseek-official', model },
   }
@@ -35,6 +35,33 @@ function mockAgent(cwd, events = [], model = 'deepseek-v4') {
 function mockState() {
   return { fallbackAttempts: new Map(), resolvedRoutes: new Map(), lastRouteTurn: 0, ultraworkTurn: 0 }
 }
+test('prompt assembly uses the current session snapshot API, never the removed events property', () => {
+  const agent = mockAgent(undefined, [{ type: 'turn/start', data: { turn: 1 } }])
+  Object.defineProperty(agent.session, 'events', {
+    get() { throw new Error('legacy session.events must not be read') },
+  })
+  const prompt = systemPromptFor({ tools: { schemas: () => [] } }, roleFace(), mockState(), agent)
+  assert.match(prompt, /<env>/)
+})
+
+test('prompt assembly remains compatible with the legacy event-array session', () => {
+  const agent = mockAgent(undefined)
+  delete agent.session.snapshotEvents
+  agent.session.events = [{ type: 'turn/start', data: { turn: 1 } }]
+  const prompt = systemPromptFor({ tools: { schemas: () => [] } }, roleFace(), mockState(), agent)
+  assert.match(prompt, /<env>/)
+})
+
+test('step budget resets at a new turn instead of reusing the previous turn step', () => {
+  const events = [
+    { type: 'turn/start', data: { turn: 1 } },
+    { type: 'step/start', data: { turn: 1, step: 9 } },
+    { type: 'turn/start', data: { turn: 2 } },
+  ]
+  const roles = { ...roleFace(), configFor: () => ({ maxSteps: 3, fallbackModels: [] }) }
+  const prompt = systemPromptFor({ tools: { schemas: () => [] } }, roles, mockState(), mockAgent(undefined, events))
+  assert.doesNotMatch(prompt, /CRITICAL - MAXIMUM STEPS REACHED/)
+})
 
 test('complete system prompt folds omo rules in despite suppressed runtime context', () => {
   const cwd = mkdtempSync(join(tmpdir(), 'omo-driver-'))
