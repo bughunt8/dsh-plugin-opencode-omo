@@ -48,9 +48,12 @@ const rolePromptCache = new Map()
 const personaCache = new Map()
 /** dsh 0.1.2 keeps the log private; older runtimes expose the event array. */
 function sessionEvents(session) {
-  if (typeof session.snapshotEvents === 'function') return session.snapshotEvents()
-  if (Array.isArray(session.events)) return session.events
-  throw new TypeError('opencode-omo: session has no supported event-log reader')
+  let events
+  if (typeof session.snapshotEvents === 'function') events = session.snapshotEvents()
+  else events = session.events
+  // A session that has not produced a log yet (or a runtime whose snapshot
+  // returns a non-array) must degrade to "no events", never crash the turn.
+  return Array.isArray(events) ? events : []
 }
 
 /** dsh folds plan mode from the durable `plan/mode` event stream. */
@@ -881,14 +884,25 @@ function roleRoute(omoRoles, state, session, turn, step) {
 
 /**
  * Resolve the route the request will actually use for one turn:step.
- * A role primary/fallback/ultrawork target wins; otherwise the assembly's
- * `provider`/`model` variables (the session's live model selection, set by
- * dsh's model-selection listener) or the agent's declared options are used.
+ *
+ * An EXPLICIT session-level model selection (the user picked a model in the
+ * composer/UI, so the variables differ from the agent's declared default
+ * options) wins over the role pin and the omo default — otherwise selecting
+ * "another model" for a pinned role could never take effect. Composer role
+ * switches keep working because they submit the role's pinned model as the
+ * selection, which routes identically.
+ *
+ * Without an explicit selection, a role primary/fallback/ultrawork target
+ * wins; otherwise the variables (session live selection) or the agent's
+ * declared options are used.
  */
 function finalRouteFor(omoRoles, state, session, turn, step, variables, agent) {
-  const target = roleRoute(omoRoles, state, session, turn, step)
-  const provider = target?.provider ?? variables?.provider ?? agent.options?.provider ?? ''
-  const model = target?.model ?? variables?.model ?? agent.options?.model ?? ''
+  const explicit = variables !== undefined
+    && variables.provider !== undefined
+    && (variables.provider !== agent?.options?.provider || variables.model !== agent?.options?.model)
+  const target = explicit ? undefined : roleRoute(omoRoles, state, session, turn, step)
+  const provider = target?.provider ?? variables?.provider ?? agent?.options?.provider ?? ''
+  const model = target?.model ?? variables?.model ?? agent?.options?.model ?? ''
   return { provider, model, target }
 }
 
@@ -905,19 +919,27 @@ function advanceFallback(omoRoles, state, session, turn, step) {
   return true
 }
 
+// Regression-test surface: the pure routing/sampling helpers that previously
+// regressed (kimi temperature, fallback re-seating, explicit model selection).
+export { defaultRoleSampling, finalRouteFor, sessionEvents }
+
 /** omo reference agent-config sampling defaults applied by the loop shim. */
 function defaultRoleSampling(role, model) {
   const id = String(model ?? '').toLowerCase()
   const gpt = id.includes('gpt') || id.includes('o1') || id.includes('o3')
   const gpt56 = id.includes('gpt-5.6')
-  if (role === 'atlas') return { temperature: 0.1 }
+  // Moonshot kimi models only accept temperature 1.0 (the platform's fixed
+  // value); sending 0.1/0.3 is a provider 400. Omit temperature for kimi so
+  // the provider applies its only legal value instead of failing the request.
+  const kimi = id.includes('kimi')
+  if (role === 'atlas') return kimi ? {} : { temperature: 0.1 }
   if (role === 'sisyphus' && gpt) return { reasoningEffort: 'medium' }
   if (role === 'hephaestus' && gpt) return { reasoningEffort: 'medium' }
-  if (role === 'oracle') return { temperature: 0.1, ...(gpt ? { reasoningEffort: 'medium' } : {}) }
-  if (role === 'librarian' || role === 'explore' || role === 'multimodal-looker') return { temperature: 0.1 }
-  if (role === 'metis') return { temperature: 0.3 }
+  if (role === 'oracle') return kimi ? {} : { temperature: 0.1, ...(gpt ? { reasoningEffort: 'medium' } : {}) }
+  if (role === 'librarian' || role === 'explore' || role === 'multimodal-looker') return kimi ? {} : { temperature: 0.1 }
+  if (role === 'metis') return kimi ? {} : { temperature: 0.3 }
   if (role === 'momus') {
-    return {
+    return kimi ? {} : {
       temperature: 0.1,
       ...(gpt56 ? { reasoningEffort: 'high' } : gpt ? { reasoningEffort: 'medium' } : {}),
     }
@@ -1115,11 +1137,21 @@ export function apply(ctx) {
     const resolved = await next()
     const state = stateFor(agent)
     const role = currentRole(omoRoles, agent.session)
-    const planned = state.resolvedRoutes.get(`${turn}:${step}`)
-    const route = planned ?? finalRouteFor(
-      omoRoles, state, agent.session, turn, step,
-      { provider: resolved.provider, model: resolved.model }, agent,
-    )
+    const key = `${turn}:${step}`
+    const planned = state.resolvedRoutes.get(key)
+    // A retry after a fallback advance re-dispatches this handler with the
+    // SAME turn:step and the assembly-frozen `planned` route still pointing
+    // at the failed primary. Resolve live whenever a fallback attempt is in
+    // flight so the advanced chain entry actually re-seats the request.
+    const route = state.fallbackAttempts.has(key)
+      ? finalRouteFor(
+        omoRoles, state, agent.session, turn, step,
+        { provider: resolved.provider, model: resolved.model }, agent,
+      )
+      : planned ?? finalRouteFor(
+        omoRoles, state, agent.session, turn, step,
+        { provider: resolved.provider, model: resolved.model }, agent,
+      )
     const target = route.target
     const ultra = ultraworkRouteFor(omoRoles, state, agent.session, turn)
     const model = route.model

@@ -22,6 +22,8 @@ import { OmoSettingsSection } from './OmoSettingsSection.tsx'
 import type { OmoSettingsSectionProps } from './OmoSettingsSection.tsx'
 import { RoleSettingsSection } from './RoleSettings.tsx'
 import type { RoleSettingsInjected } from './RoleSettings.tsx'
+import { GeneralSettingsSection } from './GeneralSettings.tsx'
+import type { GeneralSettingsInjected } from './GeneralSettings.tsx'
 import type { OmoCatalogModel } from './omo-wire.ts'
 import type {} from './slots.ts'
 export { RoleSelect } from './RoleSelect.tsx'
@@ -30,6 +32,8 @@ export { OmoSettingsSection } from './OmoSettingsSection.tsx'
 export type { OmoSettingsSectionProps } from './OmoSettingsSection.tsx'
 export { RoleSettingsSection } from './RoleSettings.tsx'
 export type { RoleSettingsInjected, RoleSettingsProps } from './RoleSettings.tsx'
+export { GeneralSettingsSection } from './GeneralSettings.tsx'
+export type { GeneralSettingsInjected } from './GeneralSettings.tsx'
 
 /** Cordis plugin name. */
 export const name = 'opencode-omo-client'
@@ -40,6 +44,8 @@ export const inject = ['slots', 'remote', 'remote.session']
 export const ROLES_ENDPOINT = '/plugins/@royenheart/dsh-plugin-opencode-omo/roles'
 export const ROLE_ENDPOINT = '/plugins/@royenheart/dsh-plugin-opencode-omo/role'
 export const ROLE_CONFIG_ENDPOINT = '/plugins/@royenheart/dsh-plugin-opencode-omo/role-config'
+export const OMO_JSON_ENDPOINT = '/plugins/@royenheart/dsh-plugin-opencode-omo/omo-json'
+export const OMO_JSON_IMPORT_ENDPOINT = '/plugins/@royenheart/dsh-plugin-opencode-omo/omo-json/import'
 
 /** RemoteResult face used by `ctx.remote.session` (no `.result` wrapper). */
 type RemoteResult<T> =
@@ -101,11 +107,12 @@ export function apply(ctx: Context): void {
   const loadModels = async (): Promise<readonly OmoCatalogModel[]> =>
     catalogOf(await session.modelCatalog())
 
-  const selectModel = async (selection: { provider: string; model: string }, sessionId: SessionId): Promise<boolean> => {
+  const selectModel = async (selection: { provider: string; model: string; reasoningEffort?: string }, sessionId: SessionId): Promise<boolean> => {
     const response = await session.selectModel({
       sessionId,
       provider: selection.provider,
       model: selection.model,
+      ...(selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort }),
     })
     return response.ok
   }
@@ -138,17 +145,33 @@ export function apply(ctx: Context): void {
       },
     }, OmoSettingsSection))
 
-    const disposeSettingsTab = ctx.slots.inject('opencode-omo.settings.tab', () => ctx.slots.register({
-      name: 'opencode-omo.settings.tab',
-      id: 'roles',
-      order: 0,
-      label: () => '角色设置',
-      inject: (): RoleSettingsInjected => ({
-        rolesEndpoint: ROLES_ENDPOINT,
-        roleConfigEndpoint: ROLE_CONFIG_ENDPOINT,
-        loadModels,
-      }),
-    }, RoleSettingsSection))
+    const disposeSettingsTab = ctx.slots.inject('opencode-omo.settings.tab', () => {
+      const disposeGeneral = ctx.slots.register({
+        name: 'opencode-omo.settings.tab',
+        id: 'general',
+        order: 0,
+        label: () => 'General',
+        inject: (): GeneralSettingsInjected => ({
+          omoJsonEndpoint: OMO_JSON_ENDPOINT,
+          omoJsonImportEndpoint: OMO_JSON_IMPORT_ENDPOINT,
+        }),
+      }, GeneralSettingsSection)
+      const disposeRoles = ctx.slots.register({
+        name: 'opencode-omo.settings.tab',
+        id: 'roles',
+        order: 1,
+        label: () => '角色设置',
+        inject: (): RoleSettingsInjected => ({
+          rolesEndpoint: ROLES_ENDPOINT,
+          roleConfigEndpoint: ROLE_CONFIG_ENDPOINT,
+          loadModels,
+        }),
+      }, RoleSettingsSection)
+      return () => {
+        disposeGeneral()
+        disposeRoles()
+      }
+    })
 
     return () => {
       disposeRole()

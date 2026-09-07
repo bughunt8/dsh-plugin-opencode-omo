@@ -335,3 +335,86 @@ test('rules renderer returns empty text when no rule files exist', () => {
     rmSync(cwd, { recursive: true, force: true })
   }
 })
+
+// --- Regressions: kimi temperature, fallback re-seating, explicit selection ---
+
+import { defaultRoleSampling, finalRouteFor, sessionEvents } from '../presets/opencode-omo/driver.mjs'
+
+function routeFace(primary = { provider: 'p-pin', model: 'm-pin' }, fallbacks = []) {
+  return {
+    roleFor: () => 'sisyphus',
+    configFor: () => ({ fallbackModels: [], model: primary }),
+    fallbackModelsFor: () => fallbacks,
+    primaryModelFor: () => primary,
+  }
+}
+
+function routeState(turn = 1, fallbackAttempts = {}) {
+  return {
+    fallbackAttempts: new Map(Object.entries(fallbackAttempts)),
+    resolvedRoutes: new Map(),
+    lastRouteTurn: turn,
+    ultraworkTurn: 0,
+  }
+}
+
+function routeSession() {
+  return { id: 'session-route', header: { cwd: '/tmp' } }
+}
+
+test('defaultRoleSampling omits temperature for kimi models (Moonshot fixed 1.0)', () => {
+  for (const role of ['atlas', 'oracle', 'metis', 'momus', 'librarian', 'explore', 'multimodal-looker']) {
+    const sampling = defaultRoleSampling(role, 'kimi-k3')
+    assert.equal(sampling.temperature, undefined, `${role}/kimi-k3 must not send a temperature`)
+  }
+  assert.equal(defaultRoleSampling('atlas', 'kimi-k2.6').temperature, undefined)
+  assert.equal(defaultRoleSampling('metis', 'moonshotai/kimi-k2.5').temperature, undefined)
+})
+
+test('defaultRoleSampling keeps temperature for non-kimi models', () => {
+  assert.equal(defaultRoleSampling('atlas', 'gpt-5.5').temperature, 0.1)
+  assert.equal(defaultRoleSampling('metis', 'claude-opus-4-7').temperature, 0.3)
+  assert.equal(defaultRoleSampling('oracle', 'deepseek-v4-pro').temperature, 0.1)
+})
+
+test('finalRouteFor honors an explicit session model selection over the role pin', () => {
+  const omoRoles = routeFace()
+  const state = routeState()
+  const agent = { options: { provider: 'p-default', model: 'm-default' } }
+  const route = finalRouteFor(omoRoles, state, routeSession(), 1, 1,
+    { provider: 'p-user', model: 'm-user' }, agent)
+  assert.equal(route.target, undefined)
+  assert.equal(route.provider, 'p-user')
+  assert.equal(route.model, 'm-user')
+})
+
+test('finalRouteFor applies the role pin when the request is the agent default', () => {
+  const omoRoles = routeFace()
+  const state = routeState()
+  const agent = { options: { provider: 'p-default', model: 'm-default' } }
+  const route = finalRouteFor(omoRoles, state, routeSession(), 1, 1,
+    { provider: 'p-default', model: 'm-default' }, agent)
+  assert.equal(route.provider, 'p-pin')
+  assert.equal(route.model, 'm-pin')
+  assert.deepEqual(route.target, { provider: 'p-pin', model: 'm-pin' })
+})
+
+test('finalRouteFor seats the advanced fallback entry on retry', () => {
+  const fallback = { provider: 'p-fb', model: 'm-fb' }
+  const omoRoles = routeFace(undefined, [fallback])
+  const state = routeState(1, { '1:1': 0 })
+  const agent = { options: { provider: 'p-default', model: 'm-default' } }
+  const route = finalRouteFor(omoRoles, state, routeSession(), 1, 1,
+    { provider: 'p-default', model: 'm-default' }, agent)
+  assert.equal(route.provider, 'p-fb')
+  assert.equal(route.model, 'm-fb')
+  assert.deepEqual(route.target, fallback)
+})
+
+test('sessionEvents degrades to an empty array instead of crashing', () => {
+  assert.deepEqual(sessionEvents({}), [])
+  assert.deepEqual(sessionEvents({ events: undefined }), [])
+  assert.deepEqual(sessionEvents({ snapshotEvents: () => undefined }), [])
+  assert.deepEqual(sessionEvents({ snapshotEvents: () => ['a', 'b'] }), ['a', 'b'])
+  assert.deepEqual(sessionEvents({ events: [1, 2] }), [1, 2])
+})
