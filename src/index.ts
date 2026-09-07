@@ -23,6 +23,7 @@ import { OMO_JSON_DEFAULT_PATH, expandOmoPath, importOmoJson, readOmoJsonFile } 
 
 export { OmoRoleRegistry } from './omo-role-registry.ts'
 export type { OmoRoleRegistryFace } from './omo-role-registry.ts'
+export { sanitizeUltrawork } from './omo-role-registry.ts'
 export { OMO_DEFAULT_ROLE, OMO_ROLES, emptyRoleConfig, isOmoRole, normalizeOmoRole } from './core/omo-roles.ts'
 export type { OmoModelSelection, OmoRoleConfig, OmoRoleSettings } from './core/omo-roles.ts'
 export { detectDshCompat } from './core/dsh-capabilities.ts'
@@ -54,10 +55,18 @@ const roleConfigSchema = z.object({
   model: z.union([modelSelectionSchema, z.const(null)]),
   fallbackModels: z.array(modelSelectionSchema).default([]),
   maxSteps: z.number(),
-  ultrawork: z.object({
-    model: modelSelectionSchema,
-    reasoningEffort: z.string(),
-  }),
+  // `z.object` coerces an absent value to `{}` (its implicit default), which
+  // would store a bogus `ultrawork: { model: {} }` for roles without an
+  // override and later crash normalizeModel. The union with `z.const(undefined)`
+  // keeps the field genuinely optional (absent → dropped), and the inner
+  // `model` is optional for reasoningEffort-only overrides.
+  ultrawork: z.union([
+    z.object({
+      model: z.union([modelSelectionSchema, z.const(undefined)]),
+      reasoningEffort: z.string(),
+    }),
+    z.const(undefined),
+  ]),
 })
 
 /** Runtime schema for the durable settings section. */
@@ -214,6 +223,10 @@ export function apply(ctx: Context): void {
               : {}),
           }
           : undefined
+        // A partial POST must preserve the fields it omits: a model-only or
+        // fallback-only POST must never wipe maxSteps / ultrawork / the
+        // fallback chain (the A0-4 data-loss class, applied to all three).
+        const previous = roles.configFor(role)
         const config = {
           ...(model === null || model === undefined
             ? {}
@@ -222,11 +235,13 @@ export function apply(ctx: Context): void {
               : { __invalid: true as const }),
           fallbackModels: Array.isArray(fallbackModels)
             ? fallbackModels.filter(isSelection).map(cleanSelection)
-            : [],
+            : previous.fallbackModels,
           ...(typeof body.maxSteps === 'number' && Number.isSafeInteger(body.maxSteps) && body.maxSteps > 0
             ? { maxSteps: body.maxSteps }
-            : {}),
-          ...(ultrawork === undefined ? {} : { ultrawork }),
+            : previous.maxSteps === undefined ? {} : { maxSteps: previous.maxSteps }),
+          ...(ultrawork === undefined
+            ? previous.ultrawork === undefined ? {} : { ultrawork: previous.ultrawork }
+            : { ultrawork }),
         }
         if ('__invalid' in config) {
           sendJson(res, 400, { ok: false, error: 'model must be null or {provider, model}' })

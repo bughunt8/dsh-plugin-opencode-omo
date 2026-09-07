@@ -862,6 +862,19 @@ function primaryModelFor(omoRoles, session) {
   return undefined
 }
 
+/**
+ * A model selection usable as a route: both ids must be non-empty strings.
+ * Stored configs coerced by older schema versions (`ultrawork: {model:{}}`)
+ * fail this check and degrade to the role primary instead of shadowing it
+ * with an empty route.
+ */
+function routeSelectionOf(model) {
+  if (model === null || typeof model !== 'object') return undefined
+  if (typeof model.provider !== 'string' || model.provider === '') return undefined
+  if (typeof model.model !== 'string' || model.model === '') return undefined
+  return model
+}
+
 function roleRoute(omoRoles, state, session, turn, step) {
   if (omoRoles === undefined) return undefined
   if (turn !== state.lastRouteTurn) {
@@ -873,7 +886,8 @@ function roleRoute(omoRoles, state, session, turn, step) {
     state.lastRouteTurn = turn
   }
   const ultrawork = ultraworkRouteFor(omoRoles, state, session, turn)
-  if (ultrawork?.model !== undefined) return ultrawork.model
+  const ultraModel = routeSelectionOf(ultrawork?.model)
+  if (ultraModel !== undefined) return ultraModel
   const attempt = state.fallbackAttempts.get(`${turn}:${step}`)
   if (attempt !== undefined) {
     const fallback = fallbackModelsFor(omoRoles, session)[attempt]
@@ -954,6 +968,10 @@ function defaultRoleSampling(role, model) {
  */
 const FALLBACK_CODES = new Set([
   'RATE_LIMIT', 'QUOTA', 'SERVER', 'TRANSPORT', 'TIMEOUT', 'EMPTY_RESPONSE', 'MODEL_NOT_FOUND',
+  // Capability/config mismatches are per-model: the next chain entry may not
+  // share them (e.g. a provider that advertises no reasoning efforts at all),
+  // so they advance the chain instead of killing the turn.
+  'UNSUPPORTED_REASONING_EFFORT', 'INVALID_MODEL_REASONING',
 ])
 
 function fallbackRetryable(failure) {
@@ -966,6 +984,106 @@ function fallbackRetryable(failure) {
 }
 
 export { fallbackRetryable }
+
+/**
+ * Known reasoning-effort ids in ascending capability order (low→high).
+ * Provider-specific ids not listed here rank by their adapter-preferred
+ * position within the model's supported list.
+ */
+const EFFORT_RANK = Object.freeze({
+  off: 0,
+  minimal: 1,
+  low: 1,
+  medium: 2,
+  balanced: 2,
+  high: 3,
+  xhigh: 4,
+  max: 4,
+})
+
+function effortRank(id) {
+  const rank = EFFORT_RANK[id]
+  return typeof rank === 'number' ? rank : undefined
+}
+
+/**
+ * Clamp one requested reasoning effort against a model's supported set.
+ *
+ * - `effort` undefined/empty → passthrough (nothing requested);
+ * - capability unreachable (`capability` undefined, or no `efforts` list) →
+ *   passthrough so the caller forwards the request unchanged;
+ * - requested effort supported → unchanged;
+ * - otherwise → clamp down to the highest supported level at or below the
+ *   request; when the request ranks below every supported level, use the
+ *   least-capable supported level (the single escalation case); when the
+ *   request's rank is unknown, use the highest ranked supported level; when
+ *   no supported id has a known rank, use the last adapter-listed entry.
+ *
+ * Returns `{ effort, original, clamped }`: `clamped` is the original string
+ * when a clamp happened and `undefined` otherwise, so the caller can log a
+ * provider/model/original/clamped warning.
+ */
+export function clampReasoningEffort(effort, capability) {
+  const original = effort === undefined || effort === null ? undefined : String(effort)
+  if (original === undefined || original === '') return { effort: original, original, clamped: undefined }
+  const ids = Array.isArray(capability?.efforts)
+    ? capability.efforts.map(entry => (entry && typeof entry.id === 'string' ? entry.id : String(entry?.id)))
+    : []
+  if (ids.length === 0) return { effort: original, original, clamped: undefined }
+  if (ids.includes(original)) return { effort: original, original, clamped: undefined }
+  const requestedRank = effortRank(original)
+  let bestId
+  let bestRank
+  for (const id of ids) {
+    const rank = effortRank(id)
+    if (rank === undefined) continue
+    if (requestedRank !== undefined && rank > requestedRank) continue
+    if (bestRank === undefined || rank > bestRank) {
+      bestId = id
+      bestRank = rank
+    }
+  }
+  if (bestId === undefined) {
+    const ranked = ids
+      .map(id => ({ id, rank: effortRank(id) }))
+      .filter(entry => entry.rank !== undefined)
+      .sort((a, b) => a.rank - b.rank)
+    bestId = ranked.length > 0 ? ranked[0].id : ids[ids.length - 1]
+  }
+  return { effort: bestId, original, clamped: original }
+}
+
+/**
+ * Resolve the model's supported-effort set through the live llm service and
+ * clamp `effort` to it. Capability unreachable (service absent or resolution
+ * failure) forwards the request unchanged; a model that resolves with NO
+ * reasoning block (or an empty efforts list) advertises no supported effort
+ * at all — forwarding one is a guaranteed UNSUPPORTED_REASONING_EFFORT, so
+ * the effort is dropped (with a warning) and the turn still runs on the
+ * chosen model.
+ */
+async function clampEffortForRoute(llm, provider, model, effort) {
+  if (effort === undefined || effort === null) return effort
+  if (typeof llm?.resolveModelInfo !== 'function') return effort
+  let info
+  try {
+    info = await llm.resolveModelInfo(provider, model)
+  } catch (error) {
+    console.warn(`[opencode-omo] reasoningEffort clamp skipped: cannot resolve ${provider}/${model} (${error instanceof Error ? error.message : String(error)})`)
+    return effort
+  }
+  if (info?.reasoning === undefined || !Array.isArray(info.reasoning.efforts) || info.reasoning.efforts.length === 0) {
+    console.warn(`[opencode-omo] reasoningEffort '${effort}' dropped: ${provider}/${model} advertises no reasoning support`)
+    return undefined
+  }
+  const decision = clampReasoningEffort(effort, info.reasoning)
+  if (decision.clamped !== undefined) {
+    console.warn(
+      `[opencode-omo] reasoningEffort '${decision.original}' is unsupported by ${provider}/${model}; clamped to '${decision.effort}'`,
+    )
+  }
+  return decision.effort
+}
 
 function maxStepsPrefillFor(agent) {
   return createAssistantMessage({
@@ -1022,6 +1140,13 @@ export function apply(ctx) {
     // Host row absent: the preset still runs; role routing degrades to the
     // default sisyphus prompt and the normal session model.
     omoRoles = undefined
+  }
+  let llm
+  try {
+    llm = ctx.get('llm')
+  } catch {
+    // llm row absent: reasoning-effort clamping degrades to passthrough.
+    llm = undefined
   }
 
   const stateFor = (agent) => {
@@ -1158,9 +1283,12 @@ export function apply(ctx) {
     const sampling = defaultRoleSampling(role, model)
     if (target !== undefined) {
       // A reasoning-effort selected for another model must not leak into
-      // the role/fallback route; use the entry's own effort when present.
+      // the role/fallback route; use the entry's own effort when present,
+      // clamped to what this exact model advertises (a configured effort the
+      // model cannot take is a guaranteed UNSUPPORTED_REASONING_EFFORT).
       const { reasoningEffort: _inheritedEffort, ...withoutInheritedEffort } = resolved
-      const effort = ultra?.reasoningEffort ?? target.reasoningEffort ?? sampling.reasoningEffort
+      const requestedEffort = ultra?.reasoningEffort ?? target.reasoningEffort ?? sampling.reasoningEffort
+      const effort = await clampEffortForRoute(llm, route.provider, model, requestedEffort)
       return {
         ...withoutInheritedEffort,
         provider: route.provider,
@@ -1169,7 +1297,10 @@ export function apply(ctx) {
         ...(sampling.temperature !== undefined ? { temperature: sampling.temperature } : {}),
       }
     }
-    const effort = ultra?.reasoningEffort ?? sampling.reasoningEffort
+    const requestedEffort = ultra?.reasoningEffort ?? sampling.reasoningEffort
+    const effort = requestedEffort === undefined || resolved.reasoningEffort !== undefined
+      ? requestedEffort
+      : await clampEffortForRoute(llm, route.provider, model, requestedEffort)
     return {
       ...resolved,
       ...(effort !== undefined && resolved.reasoningEffort === undefined ? { reasoningEffort: effort } : {}),

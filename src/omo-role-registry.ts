@@ -127,6 +127,30 @@ export function normalizeRoleConfig(config: OmoRoleConfig): StoredOmoRoleConfig 
 }
 
 /**
+ * Read-side sanitize for one stored ultrawork override. Rows written before
+ * the schema union fix can carry a coerced `model: {}` (schemastery's
+ * implicit object default): such a model is not a route, so it is dropped;
+ * an override left with neither model nor reasoningEffort is dropped whole.
+ */
+export function sanitizeUltrawork(ultrawork: OmoUltraworkOverride | undefined): OmoUltraworkOverride | undefined {
+  if (ultrawork === undefined || ultrawork === null || typeof ultrawork !== 'object') return undefined
+  const raw = (ultrawork as { model?: unknown }).model
+  const model = raw !== null && typeof raw === 'object'
+    && typeof (raw as OmoModelSelection).provider === 'string' && (raw as OmoModelSelection).provider !== ''
+    && typeof (raw as OmoModelSelection).model === 'string' && (raw as OmoModelSelection).model !== ''
+    ? raw as OmoModelSelection
+    : undefined
+  const reasoningEffort = typeof ultrawork.reasoningEffort === 'string' && ultrawork.reasoningEffort !== ''
+    ? ultrawork.reasoningEffort
+    : undefined
+  if (model === undefined && reasoningEffort === undefined) return undefined
+  return {
+    ...(model === undefined ? {} : { model }),
+    ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+  }
+}
+
+/**
  * Host service body. Constructed with `ctx.plugin(OmoRoleRegistry, {settings})`
  * from the package's host apply; the driver reaches it through the preset
  * standing scope's `ctx.get('omoRoles')`.
@@ -193,19 +217,28 @@ export class OmoRoleRegistry extends Service {
   configFor(role: string): OmoRoleConfig {
     const stored = this.settings.get().roles[normalizeOmoRole(role)]
     if (stored === undefined) return emptyRoleConfig()
+    const ultrawork = sanitizeUltrawork(stored.ultrawork)
     return {
       ...(stored.model === null || stored.model === undefined ? {} : { model: stored.model }),
       fallbackModels: stored.fallbackModels ?? [],
       ...(stored.maxSteps === undefined ? {} : { maxSteps: stored.maxSteps }),
-      ...(stored.ultrawork === undefined ? {} : { ultrawork: stored.ultrawork }),
+      ...(ultrawork === undefined ? {} : { ultrawork }),
     }
   }
 
   async setRoleConfig(role: string, config: OmoRoleConfig): Promise<void> {
     if (!isOmoRole(role)) throw new TypeError(`unknown omo role "${role}"`)
     const normalized = normalizeRoleConfig(config)
-    await this.settings.update({
-      roles: { ...this.settings.get().roles, [role]: normalized },
+    // Section-level replace, not a merge update: a role config is an exact
+    // record. `settings.update` deep-merges plain objects, which would keep a
+    // replaced model's old reasoningEffort, a cleared ultrawork override, or
+    // a removed maxSteps alive forever (the same A0-4 residue class as
+    // partial POSTs). The other section keys ride along untouched.
+    const current = this.settings.get()
+    await this.settings.replace({
+      roles: { ...current.roles, [role]: normalized },
+      sessions: current.sessions,
+      ...(current.omoJson === undefined ? {} : { omoJson: current.omoJson }),
     })
   }
 
@@ -213,13 +246,14 @@ export class OmoRoleRegistry extends Service {
     const settings = this.settings.get()
     return Object.fromEntries(OMO_ROLES.map(role => {
       const stored = settings.roles[role.id]
+      const ultrawork = sanitizeUltrawork(stored?.ultrawork)
       return [role.id, stored === undefined
         ? emptyRoleConfig()
         : {
           ...(stored.model === null || stored.model === undefined ? {} : { model: stored.model }),
           fallbackModels: stored.fallbackModels ?? [],
           ...(stored.maxSteps === undefined ? {} : { maxSteps: stored.maxSteps }),
-          ...(stored.ultrawork === undefined ? {} : { ultrawork: stored.ultrawork }),
+          ...(ultrawork === undefined ? {} : { ultrawork }),
         }]
     }))
   }

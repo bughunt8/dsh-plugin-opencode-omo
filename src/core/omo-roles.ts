@@ -48,6 +48,8 @@ export interface StoredOmoRoleConfig {
 export interface OmoRoleSettings {
   readonly roles: Record<string, StoredOmoRoleConfig>
   readonly sessions: Record<string, string>
+  /** omo.json defaults-file toggle (the General tab's own section key). */
+  readonly omoJson?: { readonly enabled: boolean; readonly path: string } | undefined
 }
 
 export type OmoAgentMode = 'primary' | 'subagent' | 'all'
