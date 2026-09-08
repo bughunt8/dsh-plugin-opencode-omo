@@ -215,6 +215,22 @@ function delegationTableMarkdown() {
     ...DELEGATION_TABLE.map(([name, when]) => `| ${name} | ${when} |`),
   ].join('\n')
 }
+export function capabilityNotes(tools) {
+  const names = tools.map(tool => tool?.name).filter(name => typeof name === 'string')
+  const lsp = names.filter(name => name.startsWith('lsp_')).sort()
+  const codegraph = names.filter(name => name.startsWith('codegraph_')).sort()
+  return [
+    '### Installed tool capabilities',
+    'The current tool catalog is authoritative; follow each tool schema, including its argument names.',
+    lsp.length > 0
+      ? `Available LSP tools: ${lsp.join(', ')}. Only call the listed operations; a configured language server is required.`
+      : 'No LSP tools are installed for this session. Use grep/read for navigation and run the project typechecker through bash.',
+    codegraph.length > 0
+      ? `Available CodeGraph tools: ${codegraph.join(', ')}. Use the session workspace and check index availability before querying.`
+      : 'No CodeGraph tools are installed for this session. Use grep/read and available LSP tools.',
+    'Session plan mode uses exit_plan_mode; delegating to the plan agent is not the same approval gate.',
+  ].join('\n')
+}
 
 function skillsGuideMarkdown() {
   return [
@@ -624,11 +640,6 @@ function dynamicSisyphusSections(tools, model) {
     '- The available skill catalog arrives as a <system-reminder> before this step; load `frontend` for UI work, `ulw-plan` for planning, and other skills when their description matches.',
     '',
     'Fan out independent work in parallel. Every delegation prompt must be complete and standalone; verify specialist output before acting on it.',
-    '',
-    '### This harness (names that family prompts may still mention)',
-    '- LSP is mounted. Call `lsp_goto_definition` / `lsp_find_references` / `lsp_hover` / `lsp_go_to_implementation`. `lsp_diagnostics` / `lsp_rename` / `lsp_symbols` exist as names and tell you the fallback (typecheck via bash; find-refs + edit). There is no raw `lsp` tool.',
-    '- Session plan mode uses `exit_plan_mode`. `task(subagent_type="plan")` / `plan()` spawn Prometheus to write `.omo/` plans — they are not the same gate.',
-    '- No `team_*`, `interactive_bash`, or `codegraph_*`. Parallel `task()` / `workflow` / `ralph` stand in for teams; persistent `bash` stands in for a TUI; grep + LSP stand in for a code graph.',
   ].join('\n')
 }
 
@@ -643,9 +654,23 @@ function opencodeUsesPatch(model) {
     && !model.includes('gpt-4')
 }
 
-function opencodeTools(tools, model) {
+const READ_ONLY_ROLES = new Set([
+  'oracle', 'librarian', 'explore', 'metis', 'momus', 'multimodal-looker',
+  'athena', 'athena-junior', 'council-member', 'prometheus', 'plan',
+])
+const COMPANION_WRITES = new Set(['lsp_rename', 'lsp_format', 'codegraph_init', 'codegraph_sync'])
+
+export function gateCompanionTool(name, role) {
+  if (READ_ONLY_ROLES.has(role) && COMPANION_WRITES.has(name)) {
+    return `opencode-omo: ${role} is read-only; ${name} may modify the workspace`
+  }
+  return undefined
+}
+
+function opencodeTools(tools, model, role) {
   const usePatch = opencodeUsesPatch(model)
   return applyOmoLspCatalog(applyOmoDelegationCatalog(tools)).filter(tool => {
+    if (gateCompanionTool(tool.name, role) !== undefined) return false
     if (tool.name === 'apply_patch') return usePatch
     if (tool.name === 'edit' || tool.name === 'write') return !usePatch
     return true
@@ -755,7 +780,7 @@ function currentRouteModel(state, session, agent) {
 function renderOmoPrompt(ctx, omoRoles, state, agent, provider, model) {
   const session = agent.session
   const role = omoRoles?.roleFor?.(session.id) ?? 'sisyphus'
-  const tools = schemasFor(ctx, agent)
+  const tools = opencodeTools(schemasFor(ctx, agent), model, role)
   // The prompt family must follow the model this step actually routes to, not
   // the session's previous route (omo re-bakes the prompt for the live model).
   const roleSystem = rolePromptFor(role, model, tools)
@@ -778,6 +803,7 @@ function renderOmoPrompt(ctx, omoRoles, state, agent, provider, model) {
     ...(plan === undefined ? [] : [plan]),
     baseBody,
     ...(dynamic === '' ? [] : [dynamic]),
+    capabilityNotes(tools),
     renderRulesFor(session.header.cwd),
   ].filter(part => part !== '').join('\n\n')
   return omoEnvBlock(session, provider, model) + '\n' + body
@@ -972,7 +998,26 @@ const FALLBACK_CODES = new Set([
   // share them (e.g. a provider that advertises no reasoning efforts at all),
   // so they advance the chain instead of killing the turn.
   'UNSUPPORTED_REASONING_EFFORT', 'INVALID_MODEL_REASONING',
+  // A missing credential is per-PROVIDER, not per-model: the next chain entry
+  // is usually a different provider whose key is present, so advance instead of
+  // killing the turn. This is distinct from AUTH (provider-rejected 401/403) and
+  // INVALID_CREDENTIAL (supplied but malformed), which are "present but wrong"
+  // and stay non-retryable — surface and fix, never silently skip.
+  // UNSTORABLE_PROVIDER_ID is a config-SHAPE error (the provider id is not a
+  // lowercase-hyphenated identifier, so it cannot address a stored credential
+  // record); the correct fix is to rename the id or use apiKeyEnv, not to store
+  // a key. It still advances because it is mechanically per-provider, but it is
+  // never silent (see CREDENTIAL_FALLBACK_CODES below).
+  'MISSING_CREDENTIAL', 'UNSTORABLE_PROVIDER_ID',
 ])
+
+/**
+ * Credential-shape failures that advance the fallback chain but must never be
+ * silent: a missing key or an unstorable provider id is a permanent
+ * misconfiguration the user should learn about, not a transient provider
+ * condition. The request-error handler warns when one of these advances.
+ */
+const CREDENTIAL_FALLBACK_CODES = new Set(['MISSING_CREDENTIAL', 'UNSTORABLE_PROVIDER_ID'])
 
 function fallbackRetryable(failure) {
   if (failure === undefined) return false
@@ -1202,7 +1247,9 @@ export function apply(ctx) {
     transformed.variables.opencode_omo_prompt = renderOmoPrompt(
       ctx, omoRoles, state, agent, route.provider, route.model,
     )
-    return { ...transformed, tools: opencodeTools(transformed.tools, route.model) }
+    return { ...transformed, tools: opencodeTools(
+      transformed.tools, route.model, currentRole(omoRoles, agent.session),
+    ) }
   }, { prepend: true })
 
   // Execution-side mirror of the model-visible gate: a hallucinated call to a
@@ -1210,12 +1257,17 @@ export function apply(ctx) {
   // registry (assembly filtering alone only changes the request schema).
   ctx.on('tools/pre-execute', async (exec, next) => {
     if (exec.agent === undefined) return next()
+    const companionReason = gateCompanionTool(exec.name, currentRole(omoRoles, exec.agent.session))
+    if (companionReason !== undefined) return { kind: 'deny', reason: companionReason }
     const reason = gateToolCall(exec.name, currentRouteModel(
       stateFor(exec.agent), exec.agent.session, exec.agent,
     ))
     if (reason !== undefined) return { kind: 'deny', reason }
     return next()
   })
+  ctx.tools?.guard?.(exec => exec.agent === undefined
+    ? undefined
+    : gateCompanionTool(exec.name, currentRole(omoRoles, exec.agent.session)))
 
   // dsh plan mode never writes a plan file; persist the approved plan at
   // opencode's location so the build-switch reminder can point at it.
@@ -1308,9 +1360,12 @@ export function apply(ctx) {
     }
   }, { prepend: true })
 
-  ctx.on('agent/request-error', async ({ agent, turn, step, failure, signal }, next) => {
+  ctx.on('agent/request-error', async ({ agent, turn, step, provider, failure, signal }, next) => {
     if (signal?.aborted || !fallbackRetryable(failure)) return next()
     if (advanceFallback(omoRoles, stateFor(agent), agent.session, turn, step)) {
+      if (typeof failure?.code === 'string' && CREDENTIAL_FALLBACK_CODES.has(failure.code)) {
+        console.warn(`[opencode-omo] ${failure.code} on provider "${provider ?? 'unknown'}" (${typeof failure?.message === 'string' ? failure.message : 'no detail'}); advancing to the next fallback model — fix the primary credential to restore intended routing`)
+      }
       return { kind: 'retry' }
     }
     return next()

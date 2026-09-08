@@ -1,0 +1,25 @@
+name: Bug report
+description: Report a reproducible OMO compatibility or installation problem.
+body:
+  - type: markdown
+    attributes:
+      value: Do not include secrets or private session data. See SECURITY.md for vulnerabilities.
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OMO revision/artifact, Harness version, Node version, OS, standalone or dsh-env.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction and expected behavior
+      description: Include minimal steps, actual behavior and redacted error output.
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Checks performed
+      description: Does it reproduce in an isolated home? Which companions and language servers are enabled?

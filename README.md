@@ -4,7 +4,9 @@
 
 # @royenheart/dsh-plugin-opencode-omo
 
-[![dsh](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Froyenheart%2Fdsh-plugin-opencode-omo%2Frefs%2Fheads%2Fdsh-migrate%2Fstate%2Fbadge.json)](https://github.com/royenheart/dsh-plugin-opencode-omo/tree/dsh-migrate/state)
+Maintained fork: [bughunt8/dsh-plugin-opencode-omo](https://github.com/bughunt8/dsh-plugin-opencode-omo).
+Original project: [royenheart/dsh-plugin-opencode-omo](https://github.com/royenheart/dsh-plugin-opencode-omo).
+The upstream package name is retained for compatibility and attribution.
 
 A DeepSeek Harness plugin that adds an `opencode-omo` agent preset (mode) to the web profile. The mode replicates the behavior of **opencode** + the **omo** plugin ([oh-my-openagent](https://github.com/code-yeongyu/oh-my-openagent)), scoped to this mode only — other presets (`standard`/…) keep the default dsh loop, sandboxed fs, and no omo hooks.
 
@@ -45,41 +47,109 @@ presets/opencode-omo/
 
 ## Install
 
-`lib/` is generated locally and is not committed. `install.py` always builds the repository's own toolchain first (`npm install` when the toolchain is missing, then `npm run build`) and only reports an error when npm itself is missing:
+### Full stack through the parent repository
+
+[**dsh-env**](https://github.com/bughunt8/dsh-env) is the parent repository and main
+clean-setup entry point for Harness + OMO + LSP Actions + CodeGraph. Follow its
+setup guide to install the tested component artifacts and required tools together.
+Do not run this plugin's standalone installer against a dsh-env managed release.
+The parent repository currently requires GitHub access; component forks remain
+independently usable.
+
+### Independent installation
+
+OMO does not require dsh-env, LSP Actions, or CodeGraph. The supported baseline is
+**Node.js 24, Python 3.10+, npm, and stock DeepSeek Harness 0.1.2-rc.1** on Linux.
+Do not substitute the floating alpha tag or mix older Harness peer packages.
+
+From this existing source directory:
 
 ```sh
-python3 install.py install --profile web              # install (idempotent)
-python3 install.py uninstall --profile web            # remove
+npm ci --ignore-scripts
+npm run build
+python3 install.py install --profile web --home "$HOME/.dsh"
 ```
 
-`install.py` symlinks the package into `~/.dsh/profiles/<profile>/node_modules/`, edits the profile's `package.json` (adds/removes the dependency + bundle entry), and publishes the preset through dsh's native user preset root as a real directory under `$DSH_HOME/.agent-presets/opencode-omo` (entries symlinked into the package, so updates stay live):
-
-Manual alternative — the package is a dsh **bundle**: it declares `dsh.bundle.patch` and ships the preset. `dsh plugin` reconciles `dsh.profile.bundles` from the installed package automatically:
+The installer initializes a missing web profile and registers OMO and its preset.
+It does not install Harness, clone any repository, replace a launcher, or copy
+credentials. Install the stock runtime separately if it is not already available:
 
 ```sh
-dsh plugin --profile web add link:/path/to/dsh-plugin-opencode-omo
+npm install --prefix "$HOME/.local/share/dsh-runtime" @deepseek-ai/dsh@0.1.2-rc.1
+DSH_HOME="$HOME/.dsh" "$HOME/.local/share/dsh-runtime/node_modules/.bin/dsh" web
 ```
 
-The preset still needs its user-root publication (the bundle patch cannot create `$DSH_HOME/.agent-presets` entries):
+Restart Harness and select **opencode-omo**. Keep the source directory in place:
+the source installer deliberately links to it. Use the packaged path below when
+the installed runtime must be independent of a development checkout.
+
+### Independent built-package installation
+
+Maintainers produce the artifact with `npm run build && npm pack --ignore-scripts`.
+Install that exact tarball beside a stock Harness runtime, then publish its preset:
 
 ```sh
-mkdir -p "$DSH_HOME/.agent-presets/opencode-omo"
-for f in /path/to/dsh-plugin-opencode-omo/presets/opencode-omo/*; do
-  ln -s "$f" "$DSH_HOME/.agent-presets/opencode-omo/"
-done
+npm install --prefix "$HOME/.local/share/dsh-runtime" --ignore-scripts /path/to/royenheart-dsh-plugin-opencode-omo-0.2.0.tgz
+python3 "$HOME/.local/share/dsh-runtime/node_modules/@royenheart/dsh-plugin-opencode-omo/install.py" install --home "$HOME/.dsh"
 ```
 
-Restart dsh and select **opencode-omo** from the mode picker.
+The built artifact carries its bundles, preset, public declarations and attribution.
+It does not require the original checkout or development toolchain. This repository
+is not published to the npm registry; do not assume `npm install` by package name
+will retrieve this fork.
 
-**Optional LSP server.** The preset preconfigures `typescript-language-server` for the `lsp` tool. `install.py` checks `PATH` and warns when it is missing; the preset then self-disables its `lsp-stdio` row so the mode still mounts (LSP queries fail gracefully instead of blocking the whole preset). Install it to enable LSP:
+### Update and remove
+
+For source installs, update files in the same checkout and rerun the installer.
+For packaged installs, replace the tarball in the same runtime prefix and rerun
+its installer. Repeated installation does not duplicate bundle entries.
 
 ```sh
-npm install -g typescript-language-server typescript
+python3 install.py uninstall --profile web --home "$HOME/.dsh"
 ```
 
-then restart dsh.
+For a packaged install, run `uninstall` using that package's installed `install.py`
+before removing the npm package. Removal preserves unrelated profile configuration,
+custom preset files and foreign symlinks. Moving an installation to a different
+source path requires uninstalling from the original path first; conflicting
+ownership is reported instead of overwritten.
 
-**web_fetch provider.** The preset enables dsh's native `web_fetch` tool (`fetch: true`). Official 0.1.2 already registers `@deepseek-ai/dsh-web-fetch-http` in the base bundle, so this plugin does **not** insert a second fetch row (that would throw `WEB_DUPLICATE_PROVIDER`). `web_search` keeps using the existing DeepSeek search provider (`DEEPSEEK_API_KEY`). Other presets keep `fetch: false`, so their tool surface is unchanged.
+### Companion tools and troubleshooting
+
+- [LSP Actions](https://github.com/bughunt8/dsh-lsp-actions) supplies real diagnostics,
+  rename and formatting. Configure its language server as documented there.
+  Stock Harness may omit native navigation packages; this does not block OMO.
+  Installing a TypeScript executable alone does not add missing native packages.
+- [CodeGraph](https://github.com/bughunt8/dsh-plugin-codegraph) supplies code-graph
+  queries with its separately provisioned CLI and workspace index.
+- OMO advertises only actual installed tools, not fake diagnostics/rename results.
+  Read-only specialist roles cannot call companion mutation tools.
+- A **managed directory symlink** error means another installer owns the profile.
+  Use dsh-env to update its releases instead of modifying them in place.
+- A **foreign path/dependency** error leaves the conflicting entry untouched.
+  Check which install owns it; do not delete user files to bypass the check.
+- A dependency mismatch should be fixed with the committed npm lockfile, not
+  `--force`, `--legacy-peer-deps`, or links to an arbitrary global Harness.
+- Configure model credentials through Harness. Never put keys in repository files
+  or attach unredacted settings, credential files, or startup tokens to issues.
+
+## Development and project support
+
+Source lives in `src/`, preset/runtime modules in `presets/`, build tooling in
+`scripts/`, and tests in `tests/`. `lib/` is generated and included only in packages.
+
+```sh
+npm ci --ignore-scripts
+npm run typecheck
+npm run build
+npm test
+npm run test:install
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md),
+[CHANGELOG.md](CHANGELOG.md), and [NOTICE.md](NOTICE.md). Changes are not released
+merely because they exist locally; release artifacts must identify the tested
+revision and pass both standalone and parent integration checks.
 
 ## Required dsh-side changes
 

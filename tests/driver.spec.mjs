@@ -9,7 +9,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fallbackRetryable, gateToolCall, maxStepsDecisionFor, maxStepsPrefillFor, opencodeUsesPatch, persistPlanFile, systemPromptFor } from '../presets/opencode-omo/driver.mjs'
+import { capabilityNotes, fallbackRetryable, gateCompanionTool, gateToolCall, maxStepsDecisionFor, maxStepsPrefillFor, opencodeUsesPatch, persistPlanFile, systemPromptFor } from '../presets/opencode-omo/driver.mjs'
 import { renderRulesFor } from '../presets/opencode-omo/rules.mjs'
 
 function roleFace(role = 'sisyphus') {
@@ -20,6 +20,26 @@ function roleFace(role = 'sisyphus') {
     primaryModelFor: () => undefined,
   }
 }
+test('capability notes reflect installed companions without inventing tools', () => {
+  const absent = capabilityNotes([])
+  assert.match(absent, /No LSP tools/)
+  assert.match(absent, /No CodeGraph tools/)
+  const present = capabilityNotes([{ name: 'lsp_diagnostics' }, { name: 'codegraph_query' }])
+  assert.match(present, /Available LSP tools: lsp_diagnostics/)
+  assert.match(present, /Available CodeGraph tools: codegraph_query/)
+  assert.doesNotMatch(present, /fallback|No CodeGraph/)
+})
+
+test('read-only roles cannot acquire companion mutation tools', () => {
+  for (const role of ['oracle', 'librarian', 'explore', 'metis', 'momus', 'prometheus']) {
+    for (const name of ['lsp_rename', 'lsp_format', 'codegraph_init', 'codegraph_sync']) {
+      assert.match(gateCompanionTool(name, role), /read-only/)
+    }
+    assert.equal(gateCompanionTool('lsp_diagnostics', role), undefined)
+    assert.equal(gateCompanionTool('codegraph_search', role), undefined)
+  }
+  assert.equal(gateCompanionTool('lsp_rename', 'sisyphus'), undefined)
+})
 
 function mockAgent(cwd, events = [], model = 'deepseek-v4') {
   return {
@@ -162,6 +182,10 @@ test('fallback advances only on omo-style retryable failure codes', () => {
   assert.equal(fallbackRetryable({ status: 404 }), true)
   assert.equal(fallbackRetryable({ code: 'AUTH' }), false)
   assert.equal(fallbackRetryable({ code: 'CONTEXT_WINDOW_EXCEEDED' }), false)
+  // A provider route with no stored key is per-provider (the next fallback may
+  // use a different, credentialed provider), so it advances unlike AUTH.
+  assert.equal(fallbackRetryable({ code: 'MISSING_CREDENTIAL' }), true)
+  assert.equal(fallbackRetryable({ code: 'UNSTORABLE_PROVIDER_ID' }), true)
   assert.equal(fallbackRetryable(undefined), false)
 })
 

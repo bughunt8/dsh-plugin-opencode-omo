@@ -39,6 +39,11 @@ const PATH_ARGUMENTS = {
   lsp_rename: ['filePath', 'file_path'],
   lsp_prepare_rename: ['filePath', 'file_path'],
   lsp_symbols: ['filePath', 'file_path'],
+  lsp_format: ['file_path'],
+  lsp_completion: ['file_path'],
+  lsp_code_action: ['file_path'],
+  lsp_signature: ['file_path'],
+  lsp_inlay_hints: ['file_path'],
 }
 
 function workspaceRoot(exec) {

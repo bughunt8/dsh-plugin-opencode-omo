@@ -9,8 +9,9 @@
  *   where each omo role's primary model and fallback models are configured.
  */
 import type { Context } from '@deepseek-ai/cordis'
-// Type-only: resolves the slots service merge + standard slot kit.
-import type {} from '@deepseek-ai/dsh-client-runtime/client'
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+// Type-only: the session UI owns the standard session slot props on 0.1.2.
+import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 // Type-only: pulls the composer SlotMap declaration.
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 // Type-only: pulls the settings.section SlotMap declaration.

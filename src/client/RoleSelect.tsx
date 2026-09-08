@@ -15,7 +15,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import type { SessionId } from '@deepseek-ai/dsh-client-connection/client'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
-import type { SessionListState } from '@deepseek-ai/dsh-client-runtime/client'
+import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
 import {
   IconAgentPresetOutline16, IconChevronDownOutline14, IconWarningOutline16, Menu, Toast,
 } from '@deepseek-ai/dsh-client-ui-primitives'

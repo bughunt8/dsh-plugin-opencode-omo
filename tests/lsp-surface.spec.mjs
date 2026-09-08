@@ -39,8 +39,8 @@ test('rewriteLspPromptSection points at the omo names', () => {
   assert.doesNotMatch(rewritten, /Use lsp when/)
 })
 
-function mockLspCtx(lsp) {
-  const registered = new Map()
+function mockLspCtx(lsp, initialTools = []) {
+  const registered = new Map(initialTools.map(tool => [tool.name, tool]))
   const listeners = new Map()
   return {
     get(service) {
@@ -51,7 +51,11 @@ function mockLspCtx(lsp) {
       throw new Error(`service not found: ${service}`)
     },
     tools: {
+      get(name) {
+        return registered.get(name)
+      },
       register(tool) {
+        assert.equal(registered.has(tool.name), false, `duplicate tool: ${tool.name}`)
         registered.set(tool.name, tool)
       },
     },
@@ -65,7 +69,7 @@ function mockLspCtx(lsp) {
   }
 }
 
-test('apply registers navigation names and fallback names', () => {
+test('apply registers navigation without pretending missing capabilities exist', () => {
   const ctx = mockLspCtx({ query: async () => ({ kind: 'locations', locations: [] }) })
   apply(ctx)
   assert.ok(ctx.registered.has('lsp_goto_definition'))
@@ -73,7 +77,7 @@ test('apply registers navigation names and fallback names', () => {
   assert.ok(ctx.registered.has('lsp_go_to_implementation'))
   assert.ok(ctx.registered.has('lsp_hover'))
   for (const toolName of FALLBACK_LSP_TOOLS) {
-    assert.ok(ctx.registered.has(toolName), toolName)
+    assert.equal(ctx.registered.has(toolName), false, toolName)
   }
   assert.equal(ctx.registered.has('lsp'), false)
 })
@@ -122,18 +126,22 @@ test('navigation rejects a missing session cwd', async () => {
   )
 })
 
-test('fallback tools return the harness-missing message without calling lsp', async () => {
-  const ctx = mockLspCtx({
-    query() {
-      throw new Error('query should not run')
-    },
-  })
+test('companion diagnostics are not shadowed in either load order', async () => {
+  for (const companionFirst of [true, false]) {
+    const diagnostics = { name: 'lsp_diagnostics', execute: () => ({ diagnostics: ['real result'] }) }
+    const ctx = mockLspCtx(undefined, companionFirst ? [diagnostics] : [])
+    apply(ctx)
+    if (!companionFirst) ctx.tools.register(diagnostics)
+    assert.equal(ctx.registered.get('lsp_diagnostics'), diagnostics)
+    assert.deepEqual(await diagnostics.execute(), { diagnostics: ['real result'] })
+  }
+})
+
+test('existing navigation implementations retain ownership', () => {
+  const hover = { name: 'lsp_hover', execute: () => ({ contents: 'real hover' }) }
+  const ctx = mockLspCtx(undefined, [hover])
   apply(ctx)
-  const diagnostics = await ctx.registered.get('lsp_diagnostics').execute({ filePath: 'a.ts' }, {})
-  assert.match(diagnostics.text, /no LSP diagnostics/)
-  assert.match(diagnostics.text, /tsc --noEmit/)
-  const rename = await ctx.registered.get('lsp_rename').execute({ filePath: 'a.ts' }, {})
-  assert.match(rename.text, /lsp_find_references/)
+  assert.equal(ctx.registered.get('lsp_hover'), hover)
 })
 
 test('pre-execute denies the hidden dsh lsp name', async () => {

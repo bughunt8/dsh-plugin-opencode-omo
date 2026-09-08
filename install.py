@@ -17,10 +17,9 @@ Usage:
     python3 install.py install [--profile web] [--home ~/.dsh]
     python3 install.py uninstall [--profile web] [--home ~/.dsh]
 
-Requires the Python standard library plus Node.js/npm. Built bundles are not
-versioned: `install.py` always builds the repository's own toolchain
-(`npm install` when needed, then `npm run build`) before installing; only a
-missing npm reports an error instead of continuing.
+Requires Python and Node.js 24. Source checkouts build their own locked
+toolchain; built package artifacts reuse their shipped bundles. The installed
+stock Harness supplies the base/web bundles when the profile starts.
 """
 
 import argparse
@@ -29,6 +28,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 PACKAGE = "@royenheart/dsh-plugin-opencode-omo"
@@ -49,7 +49,9 @@ def repo_root() -> Path:
 
 
 def profile_dir(home: str, profile: str) -> Path:
-    return Path(home).expanduser() / "profiles" / profile
+    if not profile or profile in (".", "..") or Path(profile).name != profile:
+        raise SystemExit("profile must be a single directory name")
+    return Path(home).expanduser().absolute() / "profiles" / profile
 
 
 def node_modules_pkg(profile: Path) -> Path:
@@ -62,41 +64,44 @@ def read_json(path: Path) -> dict:
 
 
 def write_json(path: Path, data: dict) -> None:
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
-        f.write("\n")
+    if path.is_symlink():
+        raise SystemExit("refusing to replace a symlinked manifest: " + str(path))
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as f:
+            temporary = Path(f.name)
+            json.dump(data, f, indent=2)
+            f.write("\n")
+        if path.exists():
+            temporary.chmod(path.stat().st_mode & 0o777)
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None and temporary.exists():
+            temporary.unlink()
 
 
 def ensure_profile(profile: Path) -> None:
     manifest = profile / "package.json"
     if not manifest.exists():
-        raise SystemExit(
-            "profile manifest not found: " + str(manifest)
-            + " - initialize the profile first (dsh plugin add)"
-        )
+        profile.mkdir(parents=True, exist_ok=True)
+        write_json(manifest, {
+            "name": "dsh-profile-" + profile.name,
+            "private": True,
+            "dependencies": {},
+            "dsh": {"profile": {"bundles": [
+                "@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app",
+            ]}},
+        })
 
-
-def shared_node_modules(home: str) -> Path:
-    """The shared profile module fallback tree (`profiles/node_modules`)."""
-    return Path(home).expanduser() / "profiles" / "node_modules"
-
-
-def dsh_install_root(home: str) -> Path:
-    """Resolve the dsh installation root from the shared `dsh` package link."""
-    anchor = shared_node_modules(home) / "@deepseek-ai" / "dsh"
-    if not anchor.is_symlink():
-        raise SystemExit("cannot locate the dsh installation anchor: " + str(anchor))
-    apps_cli = Path(os.readlink(anchor)).resolve()
-    return apps_cli.parent.parent
 
 
 def ensure_link(link: Path, target: Path) -> None:
-    """Create/replace a symlink to `target`; refuse to clobber real paths."""
+    """Create an owned link; never replace a foreign symlink or real path."""
     link.parent.mkdir(parents=True, exist_ok=True)
     if link.is_symlink():
-        if Path(os.readlink(link)).resolve() == target.resolve():
+        if link.resolve() == target.resolve():
             return
-        link.unlink()
+        raise SystemExit("refusing to replace foreign symlink: " + str(link))
     elif link.exists():
         raise SystemExit("refusing to overwrite existing path: " + str(link))
     link.symlink_to(target, target_is_directory=True)
@@ -120,7 +125,7 @@ def ensure_user_preset_link(root: Path, home: str) -> None:
     source = root / "presets" / "opencode-omo"
     preset = user_preset_dir(home) / "opencode-omo"
     if preset.is_symlink():
-        preset.unlink()
+        raise SystemExit("preset root must be a real directory: " + str(preset))
     preset.mkdir(parents=True, exist_ok=True)
     if preset.exists() and not preset.is_dir():
         raise SystemExit("refusing to overwrite non-directory path: " + str(preset))
@@ -128,11 +133,10 @@ def ensure_user_preset_link(root: Path, home: str) -> None:
         if not existing.is_symlink():
             continue
         try:
-            target = Path(os.readlink(existing)).resolve()
+            target = existing.resolve()
         except OSError:
-            existing.unlink()
             continue
-        if target != source.resolve() and source.resolve() not in target.parents:
+        if source.resolve() in target.parents and not (source / existing.name).exists():
             existing.unlink()
     for entry in sorted(source.iterdir()):
         ensure_link(preset / entry.name, entry)
@@ -146,6 +150,11 @@ def ensure_built(root: Path) -> None:
     exist. `npm install` provisions the dev toolchain only when it is missing;
     a machine without npm reports an actionable error instead of continuing.
     """
+    required = [root / "lib" / "index.js", root / "lib" / "client.js"]
+    if not (root / "scripts" / "build.sh").exists():
+        if all(path.is_file() for path in required):
+            return
+        raise SystemExit("package has no built bundles; use a built release or build the source checkout")
     npm = shutil.which("npm")
     if npm is None:
         raise SystemExit(
@@ -154,8 +163,9 @@ def ensure_built(root: Path) -> None:
         )
     try:
         if not (root / "node_modules" / ".bin" / "tsc").exists() or not (root / "node_modules" / ".bin" / "tsdown").exists():
-            print("installing the repository's own toolchain (npm install)...")
-            subprocess.run([npm, "install"], cwd=root, check=True)
+            command = "ci" if (root / "package-lock.json").is_file() else "install"
+            print("installing the repository's own toolchain (npm " + command + ")...")
+            subprocess.run([npm, command, "--ignore-scripts", "--no-audit", "--no-fund"], cwd=root, check=True)
         print("building host/client bundles (npm run build)...")
         subprocess.run([npm, "run", "build"], cwd=root, check=True)
     except subprocess.CalledProcessError as error:
@@ -163,7 +173,6 @@ def ensure_built(root: Path) -> None:
             "build failed (npm exit " + str(error.returncode) + ") - "
             "run `npm install` and `npm run build` inside " + str(root) + " to see the diagnostics"
         ) from error
-    required = [root / "lib" / "index.js", root / "lib" / "client.js"]
     missing = [str(path) for path in required if not path.exists()]
     if missing:
         raise SystemExit(
@@ -171,37 +180,64 @@ def ensure_built(root: Path) -> None:
         )
 
 
-def ensure_preset_runtime_links(root: Path, home: str) -> None:
-    """The preset's local .mjs modules resolve bare harness packages from the
-    symlinked package's own node_modules (Node realpaths the symlink), so the
-    install mirrors the packages already present in the profile module tree
-    into the package checkout. Existing workspace links (e.g. the published
-    `dsh-llm` used for typechecking) are deliberately left untouched."""
-    shared = shared_node_modules(home)
-    for name in ("dsh-tools", "dsh-llm"):
-        link = root / "node_modules" / "@deepseek-ai" / name
-        if link.exists() or link.is_symlink():
+def ensure_runtime_dependencies(root: Path) -> None:
+    """Validate declared peers through normal Node resolution, not global links."""
+    node = shutil.which("node")
+    if node is None:
+        raise SystemExit("Node.js 24 is required")
+    script = """
+const { createRequire } = require('node:module');
+const req = createRequire(process.argv[1]);
+if (Number(process.versions.node.split('.')[0]) !== 24) throw new Error('Node.js 24 is required');
+for (const name of ['dsh-tools', 'dsh-llm']) {
+  const pkg = req('@deepseek-ai/' + name + '/package.json');
+  if (pkg.version !== '0.1.2-rc.1') throw new Error(name + ' must be 0.1.2-rc.1; got ' + pkg.version);
+}
+req.resolve('js-yaml');
+"""
+    try:
+        subprocess.run([node, "-e", script, str(root / "package.json")], check=True)
+    except subprocess.CalledProcessError as error:
+        raise SystemExit(
+            "runtime dependencies are missing or incompatible; install this package's "
+            "declared dependencies (npm ci for source, npm install --omit=dev "
+            "--ignore-scripts for an extracted built package)"
+        ) from error
+
+
+def preflight(root: Path, profile: Path, home: str) -> None:
+    """Validate ownership and manifest shape before changing the target home."""
+    for directory in (profile.parent, profile, user_preset_dir(home)):
+        if directory.is_symlink():
+            raise SystemExit("managed directory symlink; use its owning installer: " + str(directory))
+    manifest = profile / "package.json"
+    if manifest.is_symlink():
+        raise SystemExit("refusing to replace a symlinked manifest: " + str(manifest))
+    if manifest.exists():
+        data = read_json(manifest)
+        try:
+            dependencies = data.get("dependencies", {})
+            bundles = data.get("dsh", {}).get("profile", {}).get("bundles", [])
+            if not isinstance(dependencies, dict) or not isinstance(bundles, list):
+                raise ValueError("dependencies must be an object and bundles a list")
+            expected = "link:" + str(root)
+            if PACKAGE in dependencies and dependencies[PACKAGE] != expected:
+                raise ValueError("package dependency belongs to another installation")
+        except (AttributeError, ValueError) as error:
+            raise SystemExit("invalid or conflicting profile manifest: " + str(error)) from error
+    source = root / "presets" / "opencode-omo"
+    if not source.is_dir():
+        raise SystemExit("shipped preset is missing: " + str(source))
+    preset = user_preset_dir(home) / "opencode-omo"
+    if preset.is_symlink() or (preset.exists() and not preset.is_dir()):
+        raise SystemExit("preset root must be a real directory: " + str(preset))
+    links = [(node_modules_pkg(profile), root)]
+    links.extend((preset / entry.name, entry) for entry in source.iterdir())
+    for link, target in links:
+        if link.is_symlink() and link.resolve() == target.resolve():
             continue
-        source = shared / "@deepseek-ai" / name
-        if not source.is_symlink():
-            raise SystemExit("required harness package link missing: " + str(source))
-        ensure_link(link, Path(os.readlink(source)).resolve())
-    js_yaml = shared / "js-yaml"
-    if js_yaml.is_symlink() and not (root / "node_modules" / "js-yaml").exists():
-        ensure_link(root / "node_modules" / "js-yaml", Path(os.readlink(js_yaml)).resolve())
-
-
-def ensure_lsp_links(home: str) -> None:
-    """The preset mounts the native dsh LSP seam (`dsh-lsp`, `dsh-lsp-stdio`,
-    `dsh-tool-lsp`), which is not part of the base bundle; link the packages
-    into the shared profile module tree."""
-    root = dsh_install_root(home)
-    scope = shared_node_modules(home) / "@deepseek-ai"
-    for name in ("dsh-lsp", "dsh-lsp-stdio", "dsh-tool-lsp"):
-        target = root / "packages" / "lsp" / ("lsp" if name == "dsh-lsp" else name.removeprefix("dsh-"))
-        if not target.exists():
-            raise SystemExit("required dsh lsp package missing: " + str(target))
-        ensure_link(scope / name, target)
+        if link.is_symlink() or link.exists():
+            raise SystemExit("refusing to overwrite existing path: " + str(link))
 
 
 def check_lsp_servers() -> None:
@@ -227,15 +263,12 @@ def check_lsp_servers() -> None:
 
 def install(args: argparse.Namespace) -> None:
     profile = profile_dir(args.home, args.profile)
-    ensure_profile(profile)
-
-    # 0. Ensure the shipped host/client bundles exist; bootstrap the npm
-    #    toolchain and build when a source-only checkout lacks them.
     root = repo_root()
+    preflight(root, profile, args.home)
     ensure_built(root)
-    ensure_preset_runtime_links(root, args.home)
-    ensure_lsp_links(args.home)
+    ensure_runtime_dependencies(root)
     check_lsp_servers()
+    ensure_profile(profile)
     ensure_user_preset_link(root, args.home)
 
     # 1. Symlink the package into the profile node_modules (idempotent).
@@ -243,7 +276,7 @@ def install(args: argparse.Namespace) -> None:
     link = node_modules_pkg(profile)
     link.parent.mkdir(parents=True, exist_ok=True)
     if link.is_symlink() or link.exists():
-        if link.is_symlink() and Path(os.readlink(link)) == target:
+        if link.is_symlink() and link.resolve() == target:
             print("already linked:", link)
         else:
             raise SystemExit("refusing to overwrite existing path: " + str(link))
@@ -277,13 +310,22 @@ def install(args: argparse.Namespace) -> None:
 def uninstall(args: argparse.Namespace) -> None:
     profile = profile_dir(args.home, args.profile)
     manifest_path = profile / "package.json"
+    for directory in (profile.parent, profile, user_preset_dir(args.home)):
+        if directory.is_symlink():
+            raise SystemExit("managed directory symlink; use its owning installer: " + str(directory))
+    if manifest_path.is_symlink():
+        raise SystemExit("refusing to replace a symlinked manifest: " + str(manifest_path))
 
     link = node_modules_pkg(profile)
-    if link.is_symlink():
+    if link.is_symlink() and link.resolve() == repo_root():
         link.unlink()
         print("removed link:", link)
+    elif link.is_symlink():
+        print("skipping foreign package link:", link)
+        return
     elif link.exists():
         print("skipping non-symlink path:", link)
+        return
     else:
         print("no link present:", link)
 
@@ -295,7 +337,7 @@ def uninstall(args: argparse.Namespace) -> None:
             if not entry.is_symlink():
                 continue
             try:
-                owned = Path(os.readlink(entry)).resolve() == source or source in Path(os.readlink(entry)).resolve().parents
+                owned = source in entry.resolve().parents
             except OSError:
                 owned = False
             if owned:
@@ -314,14 +356,14 @@ def uninstall(args: argparse.Namespace) -> None:
     if manifest_path.exists():
         data = read_json(manifest_path)
         deps = data.get("dependencies", {})
-        if PACKAGE in deps:
+        if deps.get(PACKAGE) == "link:" + str(repo_root()):
             del deps[PACKAGE]
             print("removed dependency:", PACKAGE)
-        bundles = data.get("dsh", {}).get("profile", {}).get("bundles", [])
-        if PACKAGE in bundles:
-            bundles.remove(PACKAGE)
-            print("removed bundle:", PACKAGE)
-        write_json(manifest_path, data)
+            bundles = data.get("dsh", {}).get("profile", {}).get("bundles", [])
+            if PACKAGE in bundles:
+                bundles.remove(PACKAGE)
+                print("removed bundle:", PACKAGE)
+            write_json(manifest_path, data)
 
     print("uninstalled from profile", repr(args.profile), "at", profile)
 

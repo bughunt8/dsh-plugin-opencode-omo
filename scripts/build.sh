@@ -14,3 +14,4 @@ fi
 
 node_modules/.bin/tsc --noEmit -p tsconfig.json
 node_modules/.bin/tsdown
+node_modules/.bin/tsc --declaration --emitDeclarationOnly --noEmit false --outDir lib/types -p tsconfig.json

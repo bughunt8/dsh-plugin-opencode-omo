@@ -7,7 +7,7 @@
 //   - hides the dsh name `lsp`
 //   - registers the omo names family prompts already call
 //   - maps navigation names onto ctx.lsp.query
-//   - returns a fallback for capabilities dsh does not implement
+//   - leaves diagnostics/actions to independently installed companion plugins
 
 import { defineTool } from '@deepseek-ai/dsh-tools'
 
@@ -90,35 +90,6 @@ const CURSOR_PARAMETERS = {
   character: { type: 'number', required: true, description: 'One-based UTF-16 column of the cursor.' },
 }
 
-function fallbackText(toolName) {
-  switch (toolName) {
-    case 'lsp_diagnostics':
-      return (
-        'This harness has no LSP diagnostics. Run the project typechecker via bash '
-        + '(tsc --noEmit, cargo check, go test, and so on) on the files you changed. '
-        + 'Navigation is available as lsp_goto_definition / lsp_find_references / lsp_hover.'
-      )
-    case 'lsp_rename':
-    case 'lsp_prepare_rename':
-      return (
-        'This harness has no LSP rename. Find every site with lsp_find_references, '
-        + 'then apply the rename with edit.'
-      )
-    case 'lsp_symbols':
-      return (
-        'This harness has no LSP symbol index. Use grep / glob, or lsp_goto_definition '
-        + 'and lsp_find_references at a known cursor.'
-      )
-    case 'lsp_status':
-      return (
-        'This harness has no lsp_status. A failed lsp_goto_definition / lsp_find_references '
-        + 'call with LSP_UNAVAILABLE means no language server is configured for that file. '
-        + 'This preset preconfigures typescript-language-server when it is on PATH.'
-      )
-    default:
-      return `This harness does not implement ${toolName}.`
-  }
-}
 
 async function executeNavigation(ctx, operation, args, exec) {
   const lsp = optionalLsp(ctx)
@@ -158,13 +129,14 @@ export function apply(ctx) {
         reason:
           'opencode-omo: "lsp" is the hidden dsh name. '
           + 'Use lsp_goto_definition, lsp_find_references, lsp_hover, '
-          + 'or lsp_diagnostics (typechecker via bash on this harness).',
+          + 'or another available LSP tool from the current catalog.',
       }
     }
     return next()
   })
 
   for (const [toolName, operation] of Object.entries(NAVIGATION)) {
+    if (ctx.tools.get?.(toolName) !== undefined) continue
     ctx.tools.register(defineTool({
       name: toolName,
       description:
@@ -176,20 +148,4 @@ export function apply(ctx) {
     }))
   }
 
-  for (const toolName of FALLBACK_LSP_TOOLS) {
-    ctx.tools.register(defineTool({
-      name: toolName,
-      description: fallbackText(toolName),
-      parameters: FILE_PARAMETERS,
-      output: {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: { text: { type: 'string', required: true } },
-        },
-        render: (_args, value) => [{ type: 'text', text: value.text }],
-      },
-      execute: () => ({ text: fallbackText(toolName) }),
-    }))
-  }
 }
